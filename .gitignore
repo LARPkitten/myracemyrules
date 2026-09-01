@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+
+# Extracted library DLLs — these are other people's binaries, fetched locally per
+# DEVNOTES.md rather than redistributed here.
+libs/
+
+# IDE / editor
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local packaging artifacts
+*.zip
+*.tar.gz

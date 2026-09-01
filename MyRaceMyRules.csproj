@@ -1,0 +1,102 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Vintage Story code mod: myracemyrules (My Race My Rules)
+
+    Requires the VINTAGE_STORY environment variable to point at your game install,
+    e.g. (Linux)   export VINTAGE_STORY="$HOME/.local/share/Vintagestory"
+         (Windows) setx VINTAGE_STORY "%AppData%\Vintagestory"
+
+    That folder must contain VintagestoryAPI.dll, VintagestoryLib.dll and the
+    Mods/ subfolder with VSSurvivalMod.dll, plus the library mod this depends on:
+      Mods/playermodellib*.zip or an unpacked playermodellib.dll
+
+    NOTE ON LIBRARY DLL: playermodellib ships as a .zip mod, not a loose DLL on disk.
+    To compile against it you need its .dll extracted from the zip. Set ModLibsDir
+    below to wherever you extract it (a local ./libs folder is easiest). See README.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>myracemyrules</AssemblyName>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Local folder where you extract playermodellib.dll from its mod zip -->
+    <ModLibsDir Condition="'$(ModLibsDir)' == ''">$(MSBuildProjectDirectory)/libs</ModLibsDir>
+  </PropertyGroup>
+
+  <!-- Core game assemblies (always present in a game install) -->
+  <ItemGroup>
+    <Reference Include="VintagestoryAPI">
+      <HintPath>$(VINTAGE_STORY)/VintagestoryAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VintagestoryLib">
+      <HintPath>$(VINTAGE_STORY)/VintagestoryLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VSSurvivalMod">
+      <HintPath>$(VINTAGE_STORY)/Mods/VSSurvivalMod.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VSEssentials">
+      <HintPath>$(VINTAGE_STORY)/Mods/VSEssentials.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Newtonsoft ships with the game; use the game's copy to avoid version conflicts -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(VINTAGE_STORY)/Lib/Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- protobuf-net ships with the game; needed for the [ProtoContract] network packet
+         (VS network channels serialize message types with protobuf-net). -->
+    <Reference Include="protobuf-net">
+      <HintPath>$(VINTAGE_STORY)/Lib/protobuf-net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Library mods this mod integrates with. Extract playermodellib.dll from its mod zip
+       into $(ModLibsDir). -->
+  <ItemGroup>
+    <Reference Include="playermodellib">
+      <HintPath>$(ModLibsDir)/playermodellib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Ship assets (modinfo.json, lang, textures) alongside the compiled DLL -->
+  <ItemGroup>
+    <None Include="modinfo.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="modicon.png" CopyToOutputDirectory="PreserveNewest" Condition="Exists('modicon.png')" />
+    <None Include="assets/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="assets" />
+  </ItemGroup>
+
+  <!-- Also copy built mod and assets into a Mods/<modname>/ folder beside the assembly so the game
+       can load the unpacked mod during debugging (bin/Debug/Mods/$(AssemblyName)/). -->
+  <Target Name="CopyModFiles" AfterTargets="Build">
+    <PropertyGroup>
+      <ModDestDir>$(OutDir)Mods\$(AssemblyName)\</ModDestDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(ModDestDir)" />
+
+    <!-- Copy the compiled DLL -->
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModDestDir)" />
+
+    <!-- Copy mod metadata and icon if present in the project root -->
+    <Copy SourceFiles="$(ProjectDir)modinfo.json" DestinationFolder="$(ModDestDir)" Condition="Exists('$(ProjectDir)modinfo.json')" />
+    <Copy SourceFiles="$(ProjectDir)modicon.png" DestinationFolder="$(ModDestDir)" Condition="Exists('$(ProjectDir)modicon.png')" />
+
+    <!-- Copy assets recursively into Mods/<modname>/assets/... -->
+    <ItemGroup>
+      <_ModAssets Include="assets\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ModAssets)"
+          DestinationFiles="@(_ModAssets->'$(ModDestDir)assets\%(RecursiveDir)%(Filename)%(Extension)')"
+          Condition="Exists('assets')" />
+  </Target>
+
+</Project>

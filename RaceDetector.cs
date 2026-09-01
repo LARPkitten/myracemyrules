@@ -1,0 +1,263 @@
+using System;
+using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
+using Vintagestory.API.Common;
+
+namespace MyRaceMyRules
+{
+    /// <summary>
+    /// A race discovered in a mod's assets, with the values currently declared by that mod.
+    /// </summary>
+    public class DetectedRace
+    {
+        public string Domain = "";          // e.g. "racialequality" ("" for the default seraph)
+        public string ModelCode = "";       // e.g. "orc" / "seraph"
+        public string AssetPath = "";        // asset holding the model settings
+        public string FullCode => Domain.Length == 0 ? ModelCode : $"{Domain}:{ModelCode}";
+
+        /// <summary>
+        /// True for the default seraph model. Its skin parts live in the vanilla player
+        /// entity JSON (SkinPartsAssetPath) rather than in the model-settings asset.
+        /// </summary>
+        public bool IsSeraph;
+        public string? SkinPartsAssetPath;
+
+        // Current values as declared by the owning mod (null = not specified).
+        public float[]? SizeRange;           // [min, max]
+        public float? EyeHeight;
+        public float[]? CollisionBox;        // [width, height]
+        public bool? Enabled;
+        public List<string>? AvailableClasses;
+        public List<string>? ExtraTraits;
+
+        /// <summary>Skinnable parts: part code -> variant codes (hairstyles, colors, ...).</summary>
+        public Dictionary<string, List<string>> SkinParts = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Scans loaded mods for PlayerModelLib custom-model configs and extracts the races they
+    /// define. Custom models: assets/&lt;domain&gt;/config/customplayermodels/*.json, top-level
+    /// keys = model codes. The default "seraph" model is special (per PlayerModelLib's
+    /// LoadDefault): its model settings live in playermodellib:config/default-model-config.json
+    /// under the key "playermodellib:seraph", while its skin parts (hairstyles, facial hair,
+    /// colors) come from the vanilla player entity: game:entities/humanoid/player.json →
+    /// attributes.skinnableParts. EyeHeight/CollisionBox for seraph come from the entity too.
+    /// </summary>
+    public static class RaceDetector
+    {
+        private const string CategoryPath = "config/customplayermodels";
+        public const string SeraphCode = "seraph";
+        public const string SeraphModelConfigPath = "playermodellib:config/default-model-config.json";
+        public const string SeraphModelConfigKey = "playermodellib:seraph";
+        public const string PlayerEntityPath = "game:entities/humanoid/player.json";
+
+        /// <summary>
+        /// Detect all races across all loaded mods, including the default seraph. Uses the
+        /// asset manager, so it must run at or after AssetsLoaded.
+        /// </summary>
+        public static List<DetectedRace> DetectRaces(ICoreAPI api)
+        {
+            var results = new List<DetectedRace>();
+
+            DetectedRace? seraph = DetectSeraph(api);
+            if (seraph != null) results.Add(seraph);
+
+            List<IAsset> assets;
+            try
+            {
+                assets = api.Assets.GetMany(CategoryPath, loadAsset: true);
+            }
+            catch (Exception e)
+            {
+                api.Logger.Warning("[myracemyrules] Failed to enumerate customplayermodels assets: {0}", e);
+                return results;
+            }
+
+            foreach (IAsset asset in assets)
+            {
+                if (asset?.Location == null) continue;
+                if (!asset.Location.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) continue;
+
+                string domain = asset.Location.Domain;
+
+                JObject? root;
+                try
+                {
+                    root = JObject.Parse(asset.ToText());
+                }
+                catch (Exception e)
+                {
+                    api.Logger.Warning("[myracemyrules] Could not parse {0}: {1}", asset.Location, e.Message);
+                    continue;
+                }
+
+                // Top-level keys are model codes; skip non-object values and known meta keys.
+                foreach (var prop in root.Properties())
+                {
+                    if (prop.Value is not JObject modelObj) continue;
+                    if (IsMetaKey(prop.Name)) continue;
+
+                    var race = new DetectedRace
+                    {
+                        Domain = domain,
+                        ModelCode = prop.Name,
+                        AssetPath = asset.Location.ToString(),
+                        SizeRange = ReadFloatArray(modelObj, "SizeRange"),
+                        EyeHeight = ReadFloat(modelObj, "EyeHeight"),
+                        CollisionBox = ReadFloatArray(modelObj, "CollisionBox"),
+                        Enabled = ReadBool(modelObj, "Enabled"),
+                        AvailableClasses = ReadStringList(modelObj, "AvailableClasses"),
+                        ExtraTraits = ReadStringList(modelObj, "ExtraTraits"),
+                        SkinParts = ReadSkinParts(GetPropCI(modelObj, "SkinnableParts") as JArray),
+                    };
+                    results.Add(race);
+                }
+            }
+
+            api.Logger.Notification("[myracemyrules] Detected {0} race(s).", results.Count);
+            return results;
+        }
+
+        /// <summary>
+        /// Detect the default seraph model: settings from PlayerModelLib's default-model-config,
+        /// skin parts from the vanilla player entity JSON.
+        /// </summary>
+        public static DetectedRace? DetectSeraph(ICoreAPI api)
+        {
+            var race = new DetectedRace
+            {
+                Domain = "",
+                ModelCode = SeraphCode,
+                AssetPath = SeraphModelConfigPath,
+                IsSeraph = true,
+                SkinPartsAssetPath = PlayerEntityPath,
+            };
+
+            // Model settings (SizeRange, classes, ...) from default-model-config.json.
+            try
+            {
+                IAsset? cfgAsset = api.Assets.TryGet(new AssetLocation(SeraphModelConfigPath));
+                if (cfgAsset != null &&
+                    JObject.Parse(cfgAsset.ToText())[SeraphModelConfigKey] is JObject cfg)
+                {
+                    race.SizeRange = ReadFloatArray(cfg, "SizeRange");
+                    race.AvailableClasses = ReadStringList(cfg, "AvailableClasses");
+                    race.ExtraTraits = ReadStringList(cfg, "ExtraTraits");
+                    race.Enabled = ReadBool(cfg, "Enabled");
+                }
+            }
+            catch (Exception e)
+            {
+                api.Logger.Warning("[myracemyrules] Could not parse seraph default-model-config: {0}", e.Message);
+            }
+
+            // Skin parts (hairstyles, facial hair, colors) + EyeHeight/CollisionBox from the
+            // vanilla player entity JSON.
+            try
+            {
+                IAsset? entityAsset = api.Assets.TryGet(new AssetLocation(PlayerEntityPath));
+                if (entityAsset == null)
+                {
+                    api.Logger.Warning("[myracemyrules] Player entity asset not found; seraph detection incomplete.");
+                    return race;
+                }
+
+                JObject entity = JObject.Parse(entityAsset.ToText());
+                race.EyeHeight = ReadFloat(entity, "eyeHeight");
+
+                if (GetPropCI(entity, "attributes") is JObject attributes)
+                {
+                    race.SkinParts = ReadSkinParts(GetPropCI(attributes, "skinnableParts") as JArray);
+                }
+            }
+            catch (Exception e)
+            {
+                api.Logger.Warning("[myracemyrules] Could not parse player entity for seraph skin parts: {0}", e.Message);
+            }
+
+            return race;
+        }
+
+        /// <summary>Case-insensitive property lookup (asset JSON casing varies: vanilla lowercase, PML PascalCase).</summary>
+        public static JToken? GetPropCI(JObject obj, string name)
+        {
+            foreach (var prop in obj.Properties())
+                if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase))
+                    return prop.Value;
+            return null;
+        }
+
+        private static Dictionary<string, List<string>> ReadSkinParts(JArray? parts)
+        {
+            var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            if (parts == null) return result;
+
+            foreach (var token in parts)
+            {
+                if (token is not JObject part) continue;
+                string? code = (GetPropCI(part, "code") as JValue)?.Value?.ToString();
+                if (string.IsNullOrEmpty(code)) continue;
+
+                var variants = new List<string>();
+                if (GetPropCI(part, "variants") is JArray variantArr)
+                {
+                    foreach (var v in variantArr)
+                    {
+                        if (v is not JObject variant) continue;
+                        string? vcode = (GetPropCI(variant, "code") as JValue)?.Value?.ToString();
+                        if (!string.IsNullOrEmpty(vcode)) variants.Add(vcode!);
+                    }
+                }
+                result[code!] = variants;
+            }
+            return result;
+        }
+
+        private static bool IsMetaKey(string key)
+        {
+            switch (key)
+            {
+                case "DisabledElementsByShape":
+                case "EnabledElementsByShape":
+                case "AnimationsMetaData":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static float[]? ReadFloatArray(JObject o, string key)
+        {
+            if (GetPropCI(o, key) is not JArray arr) return null;
+            var list = new List<float>();
+            foreach (var t in arr)
+                if (t.Type == JTokenType.Float || t.Type == JTokenType.Integer)
+                    list.Add(t.Value<float>());
+            return list.Count > 0 ? list.ToArray() : null;
+        }
+
+        private static float? ReadFloat(JObject o, string key)
+        {
+            var t = GetPropCI(o, key);
+            if (t != null && (t.Type == JTokenType.Float || t.Type == JTokenType.Integer))
+                return t.Value<float>();
+            return null;
+        }
+
+        private static bool? ReadBool(JObject o, string key)
+        {
+            var t = GetPropCI(o, key);
+            if (t != null && t.Type == JTokenType.Boolean) return t.Value<bool>();
+            return null;
+        }
+
+        private static List<string>? ReadStringList(JObject o, string key)
+        {
+            if (GetPropCI(o, key) is not JArray arr) return null;
+            var list = new List<string>();
+            foreach (var t in arr)
+                if (t.Type == JTokenType.String) list.Add(t.Value<string>()!);
+            return list;
+        }
+    }
+}
