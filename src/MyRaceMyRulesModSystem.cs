@@ -168,7 +168,12 @@ namespace MyRaceMyRules
         private static JArray? CaptureDefaultSkinnableParts(ICoreAPI api)
         {
             JObject? entity = LoadAssetJson(api, RaceDetector.PlayerEntityPath);
-            if (entity == null) return null;
+            if (entity == null)
+            {
+                api.Logger.Warning("[myracemyrules] Could not resolve the default player entity asset for seraph defaults.");
+                return null;
+            }
+
             if (RaceDetector.GetPropCI(entity, "attributes") is not JObject attributes) return null;
             if (RaceDetector.GetPropCI(attributes, "skinnableParts") is not JArray parts) return null;
             return (JArray)parts.DeepClone();
@@ -206,8 +211,7 @@ namespace MyRaceMyRules
             var sb = new StringBuilder();
             sb.AppendLine($"Detected races: {DetectedRaces.Count}");
             foreach (var r in DetectedRaces)
-                sb.AppendLine($"  {r.FullCode}  SizeRange={FormatArr(r.SizeRange)} EyeHeight={r.EyeHeight?.ToString() ?? "-"} SkinParts={r.SkinParts.Count}");
-            sb.AppendLine($"Active overrides: {Config.Overrides.Count}");
+                sb.AppendLine($"  {r.FullCode} - Active overrides: {Config.Overrides.Count}");
             foreach (var key in Config.Overrides.Keys)
                 sb.AppendLine($"  {key}");
             sb.AppendLine("Use '/myracemyrules racecode' to list a race's skin parts and variant codes.");
@@ -223,12 +227,25 @@ namespace MyRaceMyRules
                 return $"Race '{raceCode}' not found. Run /myracemyrules to list race codes.";
 
             var sb = new StringBuilder();
-            sb.AppendLine($"Skin parts of {race.FullCode} ({race.SkinParts.Count}):");
+            string availableClassesText = race.AvailableClasses is null || race.AvailableClasses.Count == 0
+                ? "all classes (unrestricted)"
+                : string.Join(", ", race.AvailableClasses);
+            string extraTraitsText = race.ExtraTraits is null || race.ExtraTraits.Count == 0
+                ? "(none)"
+                : string.Join(", ", race.ExtraTraits);
+
+            sb.AppendLine($"Race: {race.FullCode}");
+            sb.AppendLine($"=================================");
+            sb.AppendLine($"AvailableClasses: {availableClassesText}");
+            sb.AppendLine($"ExtraTraits: {extraTraitsText}");
+            sb.AppendLine($"Skin parts ({race.SkinParts.Count}):");
+            sb.AppendLine($"=================================");
             foreach ((string code, List<string> variants) in race.SkinParts)
             {
-                sb.AppendLine($"  {code} ({variants.Count} variant(s)):");
+                sb.AppendLine($"{code} ({variants.Count} variant(s)):");
                 if (variants.Count > 0)
                     sb.AppendLine($"    {string.Join(", ", variants)}");
+                    sb.AppendLine($"---------------------------------");
             }
             return sb.ToString();
         }
@@ -493,7 +510,7 @@ namespace MyRaceMyRules
             if (ov.AvailableClasses != null) model["AvailableClasses"] = new JArray(ov.AvailableClasses);
             if (ov.ExtraTraits != null) model["ExtraTraits"] = new JArray(ov.ExtraTraits);
 
-            if ((ov.EnableAllSkinnableParts || ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0) &&
+            if ((ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0) &&
                 RaceDetector.GetPropCI(model, "SkinnableParts") is JArray parts)
                 ApplySkinnablePartOverrides(api, parts, ov, race.FullCode);
 
@@ -529,7 +546,7 @@ namespace MyRaceMyRules
             }
 
             // 2) Entity-level values + skin parts (hairstyles, facial hair, colors).
-            bool wantsSkinParts = ov.EnableAllSkinnableParts || ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0;
+            bool wantsSkinParts = ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0;
             if (ov.EyeHeight.HasValue || ov.CollisionBox != null || wantsSkinParts)
             {
                 JObject? entity = LoadAssetJson(api, RaceDetector.PlayerEntityPath);
@@ -569,23 +586,13 @@ namespace MyRaceMyRules
         /// Apply skinnable-part overrides to a skinnableParts JSON array (shared by custom
         /// models and the seraph entity).
         ///
-        /// Order: the race-level EnableAllSkinnableParts flag runs first (enables every part),
-        /// then per-part entries refine it — so "enable everything, then restrict a few" works.
-        /// A per-part EnableAll keeps all of that part's variants (skips its filters).
+        /// Order: the race-level IncludeAllDefaultVariants flag runs first, then per-part
+        /// entries refine it — so "restore everything, then restrict a few" works.
         /// </summary>
         private void ApplySkinnablePartOverrides(ICoreAPI api, JArray parts,
             RaceOverrideEntry ov, string raceForLog)
         {
-            // Race-level: enable every part this race defines.
-            if (ov.EnableAllSkinnableParts)
-            {
-                foreach (JObject part in parts.OfType<JObject>())
-                    part["enabled"] = true;
-                api.Logger.Notification("[myracemyrules] ({0}) Enabled all {1} skinnable part(s).",
-                    raceForLog, parts.OfType<JObject>().Count());
-            }
-
-            // Race-level: give every part the complete default (seraph) variant list.
+            // Race-level: give every part this race defines the complete default variant list.
             if (ov.IncludeAllDefaultVariants)
             {
                 if (_defaultSkinnableParts == null)
@@ -624,39 +631,13 @@ namespace MyRaceMyRules
                     continue;
                 }
 
-                // Per-part EnableAll: on + all variants kept, so skip variant filtering.
-                if (pov.EnableAll)
-                {
-                    part["enabled"] = true;
-                    if (pov.AllowedVariants != null || pov.RemoveVariants != null)
-                    {
-                        api.Logger.Warning("[myracemyrules] ({0}/{1}) EnableAll is set, so AllowedVariants/" +
-                            "RemoveVariants are ignored for this part.", raceForLog, partCode);
-                    }
-                }
-                else
-                {
-                    if (pov.Enabled.HasValue)
-                        part["enabled"] = pov.Enabled.Value;
+                if (pov.Enabled.HasValue)
+                    part["enabled"] = pov.Enabled.Value;
 
-                    if ((pov.AllowedVariants != null || pov.RemoveVariants != null) &&
-                        RaceDetector.GetPropCI(part, "variants") is JArray variants)
-                    {
-                        FilterVariants(api, variants, pov, raceForLog, partCode);
-                    }
-                }
-
-                if (pov.Set != null)
+                if ((pov.AllowedVariants != null || pov.RemoveVariants != null) &&
+                    RaceDetector.GetPropCI(part, "variants") is JArray variants)
                 {
-                    foreach ((string key, object value) in pov.Set)
-                    {
-                        try { part[key] = JToken.FromObject(value); }
-                        catch (Exception e)
-                        {
-                            api.Logger.Warning("[myracemyrules] ({0}/{1}) Could not set '{2}': {3}",
-                                raceForLog, partCode, key, e.Message);
-                        }
-                    }
+                    FilterVariants(api, variants, pov, raceForLog, partCode);
                 }
             }
         }
@@ -778,11 +759,18 @@ namespace MyRaceMyRules
         private static JObject? LoadAssetJson(ICoreAPI api, string path)
         {
             IAsset? asset = api.Assets.TryGet(new AssetLocation(path));
+            if (asset == null && path == RaceDetector.PlayerEntityPath)
+            {
+                JObject? fileJson = RaceDetector.ResolvePlayerEntityJson(api);
+                if (fileJson != null) return fileJson;
+            }
+
             if (asset == null)
             {
                 api.Logger.Warning("[myracemyrules] Asset '{0}' not found.", path);
                 return null;
             }
+
             try { return JObject.Parse(asset.ToText()); }
             catch (Exception e)
             {

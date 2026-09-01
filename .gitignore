@@ -19,3 +19,6 @@ Thumbs.db
 # Local packaging artifacts
 *.zip
 *.tar.gz
+
+# Personal notes to self
+DEVNOTES.md

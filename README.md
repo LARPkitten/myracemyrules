@@ -41,19 +41,20 @@ Everything lives in one file on the **server**, created for you on first run:
 | `Enabled` | Whether the race appears in character creation |
 | `AvailableClasses` | Which classes the race can pick (`[]` = all) |
 | `ExtraTraits` | Traits granted on top of the class |
-| `SkinnableParts` | Hairstyles, facial hair, colors, and any other appearance option — narrow the choices, hide a section, put back options a race mod removed, or change any other setting in that section |
+| `SkinnableParts` | Hairstyles, facial hair, colors, and any other appearance option — narrow the choices, hide a section, or put back options a race mod removed |
 
 ### Example
 
-Orcs who can be tiny or towering with every appearance option unlocked, no dwarves, and a
-plainer seraph:
+Orcs who can be tiny or towering with all haircolors allowed, no dwarves, and a plainer seraph:
 
 ```json
 {
   "Overrides": {
     "racialequality:ork": {
       "SizeRange": [0.5, 2.0],
-      "EnableAllSkinnableParts": true
+      "SkinnableParts":{
+        "haircolor": { "IncludeDefaultVariants": true }
+      }
     },
     "racialequality:dwarf": {
       "Enabled": false
@@ -85,8 +86,6 @@ default seraph, which always has everything.
 |---|---|---|
 | `IncludeAllDefaultVariants` | race | Every appearance section the race has gets the complete set of options back |
 | `IncludeDefaultVariants` | one section | Same, but only for that section — "all hairstyles", "all hair colors" |
-| `EnableAllSkinnableParts` | race | Switches every section the race already has back on, without adding anything |
-| `EnableAll` | one section | Turns that section on and keeps everything in it |
 
 Race-wide flags run first, so "give me everything, then take one thing away" works:
 
@@ -115,8 +114,6 @@ Race-wide flags run first, so "give me everything, then take one thing away" wor
 | `AllowedVariants` | Keep only the options you list |
 | `RemoveVariants` | Drop the options you list |
 | `Enabled` | `false` hides the section completely |
-| `EnableAll` | Turn the section on and keep everything in it (ignores the two filters above) |
-| `Set` | For the adventurous — a key/value map poked straight into the section's JSON, for settings this mod has no name for, e.g. `"Set": { "useDropDown": true }` |
 
 Every field a race block accepts:
 
@@ -126,7 +123,6 @@ Every field a race block accepts:
 - `Enabled` — `true` / `false`
 - `AvailableClasses` — list of class codes (`[]` means all)
 - `ExtraTraits` — list of trait codes
-- `EnableAllSkinnableParts` — `true` / `false`
 - `IncludeAllDefaultVariants` — `true` / `false`
 - `SkinnableParts` — map of section code to the options in the table above
 

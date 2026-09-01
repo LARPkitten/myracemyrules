@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 using Vintagestory.API.Common;
 
@@ -51,6 +53,19 @@ namespace MyRaceMyRules
         public const string SeraphModelConfigKey = "playermodellib:seraph";
         public const string PlayerEntityPath = "game:entities/humanoid/player.json";
 
+        private static readonly string[] PlayerEntityPathCandidates =
+        {
+            PlayerEntityPath,
+            "game:entities/player.json",
+            "game:entities/playerentity.json",
+            "game:entities/humanoid/playerentity.json",
+            "entities/humanoid/player.json",
+            "entities/humanoid/playerentity.json",
+            "entity/humanoid/player.json",
+            "entity/humanoid/playerentity.json",
+            "game:entities/humanoid/playerentity-humanoid.json"
+        };
+
         /// <summary>
         /// Detect all races across all loaded mods, including the default seraph. Uses the
         /// asset manager, so it must run at or after AssetsLoaded.
@@ -58,9 +73,14 @@ namespace MyRaceMyRules
         public static List<DetectedRace> DetectRaces(ICoreAPI api)
         {
             var results = new List<DetectedRace>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             DetectedRace? seraph = DetectSeraph(api);
-            if (seraph != null) results.Add(seraph);
+            if (seraph != null)
+            {
+                results.Add(seraph);
+                seen.Add(seraph.FullCode);
+            }
 
             List<IAsset> assets;
             try
@@ -110,6 +130,9 @@ namespace MyRaceMyRules
                         ExtraTraits = ReadStringList(modelObj, "ExtraTraits"),
                         SkinParts = ReadSkinParts(GetPropCI(modelObj, "SkinnableParts") as JArray),
                     };
+
+                    if (seen.Contains(race.FullCode)) continue;
+                    seen.Add(race.FullCode);
                     results.Add(race);
                 }
             }
@@ -155,14 +178,13 @@ namespace MyRaceMyRules
             // vanilla player entity JSON.
             try
             {
-                IAsset? entityAsset = api.Assets.TryGet(new AssetLocation(PlayerEntityPath));
-                if (entityAsset == null)
+                JObject? entity = ResolvePlayerEntityJson(api);
+                if (entity == null)
                 {
                     api.Logger.Warning("[myracemyrules] Player entity asset not found; seraph detection incomplete.");
                     return race;
                 }
 
-                JObject entity = JObject.Parse(entityAsset.ToText());
                 race.EyeHeight = ReadFloat(entity, "eyeHeight");
 
                 if (GetPropCI(entity, "attributes") is JObject attributes)
@@ -176,6 +198,86 @@ namespace MyRaceMyRules
             }
 
             return race;
+        }
+
+        public static IAsset? ResolvePlayerEntityAsset(ICoreAPI api)
+        {
+            foreach (string candidate in PlayerEntityPathCandidates)
+            {
+                if (api.Assets.TryGet(new AssetLocation(candidate)) is IAsset direct)
+                {
+                    api.Logger.Notification("[myracemyrules] Resolved seraph player entity asset to '{0}'.", direct.Location);
+                    return direct;
+                }
+            }
+
+            // The asset manager may not have registered the base player entity at this phase even when
+            // the file exists on disk in the actual game install. Fall through to a direct filesystem
+            // read using the game root the launcher is using.
+            if (TryLoadPlayerEntityJsonFromDisk(out JObject? fsJson, out string? resolvedPath))
+            {
+                api.Logger.Notification("[myracemyrules] Resolved seraph player entity from the installed game files on disk: '{0}'.", resolvedPath);
+                return null;
+            }
+
+            api.Logger.Warning("[myracemyrules] No player entity asset matched the known seraph paths under the asset manager.");
+            return null;
+        }
+
+        public static JObject? ResolvePlayerEntityJson(ICoreAPI api)
+        {
+            foreach (string candidate in PlayerEntityPathCandidates)
+            {
+                if (api.Assets.TryGet(new AssetLocation(candidate)) is IAsset direct)
+                    return JObject.Parse(direct.ToText());
+            }
+
+            if (TryLoadPlayerEntityJsonFromDisk(out JObject? fsJson, out _))
+                return fsJson;
+
+            return null;
+        }
+
+        private static bool TryLoadPlayerEntityJsonFromDisk(out JObject? json, out string? resolvedPath)
+        {
+            json = null;
+            resolvedPath = null;
+
+            List<string> roots = new();
+            string? vintageStory = Environment.GetEnvironmentVariable("VINTAGE_STORY");
+            if (!string.IsNullOrWhiteSpace(vintageStory)) roots.Add(vintageStory);
+
+            roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VSLGameVersions", "1.22.7"));
+            roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VSLInstallations", "1.22.7"));
+
+            foreach (string root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(root)) continue;
+
+                foreach (string rel in new[]
+                {
+                    Path.Combine("assets", "game", "entities", "humanoid", "player.json"),
+                    Path.Combine("assets", "game", "entities", "humanoid", "playerentity.json"),
+                    Path.Combine("assets", "game", "entities", "player.json"),
+                    Path.Combine("assets", "entities", "humanoid", "player.json"),
+                    Path.Combine("assets", "entities", "player.json")
+                })
+                {
+                    string full = Path.Combine(root, rel);
+                    if (File.Exists(full))
+                    {
+                        try
+                        {
+                            json = JObject.Parse(File.ReadAllText(full));
+                            resolvedPath = full;
+                            return true;
+                        }
+                        catch { }
+                    }
+                }
+            }
+
+            return false;
         }
 
         /// <summary>Case-insensitive property lookup (asset JSON casing varies: vanilla lowercase, PML PascalCase).</summary>

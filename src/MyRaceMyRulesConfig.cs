@@ -54,13 +54,6 @@ namespace MyRaceMyRules
         // ----- Skinnable parts (hairstyles, facial hair, colors, ...) -----
 
         /// <summary>
-        /// Enable EVERY skinnable part this race defines, overriding any parts the race mod
-        /// author disabled, and keep all of their variants. Applied first, so entries in
-        /// <see cref="SkinnableParts"/> can still restrict individual parts afterwards.
-        /// </summary>
-        public bool EnableAllSkinnableParts = false;
-
-        /// <summary>
         /// Give EVERY skinnable part of this race the complete variant list from the default
         /// race (seraph) — i.e. "all hairstyles, all beards, all colors". Missing variants are
         /// added; the race's own extras are kept.
@@ -89,12 +82,6 @@ namespace MyRaceMyRules
     public class SkinnablePartOverride
     {
         /// <summary>
-        /// Enable this part and keep ALL of its variants (ignores AllowedVariants /
-        /// RemoveVariants for this part). Use to undo a restriction a race mod baked in.
-        /// </summary>
-        public bool EnableAll = false;
-
-        /// <summary>
         /// Include the complete variant list for this part from the default race (seraph) —
         /// e.g. all hairstyles for "hairbase", all colors for "haircolor". Missing variants
         /// are added; the race's own extras are kept.
@@ -115,18 +102,5 @@ namespace MyRaceMyRules
 
         /// <summary>Remove these variant codes. Null = nothing removed.</summary>
         public List<string>? RemoveVariants;
-
-        /// <summary>
-        /// Advanced: raw property overrides merged onto the part's JSON (any setting in the
-        /// part's section, e.g. {"useDropDown": true}). Applied at load only (not live).
-        ///
-        /// SECURITY: the values are typed as <c>object</c>, which is safe only because this
-        /// config is deserialized with Newtonsoft's default settings — without
-        /// <c>TypeNameHandling</c>, JSON values become plain primitives/JObjects and cannot name
-        /// a .NET type to instantiate. Never enable <c>TypeNameHandling</c> on this config: a
-        /// config also arrives over the network from the server, so that would turn this field
-        /// into a deserialization gadget.
-        /// </summary>
-        public Dictionary<string, object>? Set;
     }
 }

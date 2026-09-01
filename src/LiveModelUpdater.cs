@@ -68,7 +68,7 @@ namespace MyRaceMyRules
             {
                 bool anyDialogRelevant = ov.SizeRange != null || ov.Enabled.HasValue ||
                     ov.AvailableClasses != null || ov.ExtraTraits != null ||
-                    ov.EnableAllSkinnableParts || ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0;
+                    ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0;
                 if (!anyDialogRelevant) continue;
 
                 if (!customModels.Contains(fullCode))
@@ -93,7 +93,7 @@ namespace MyRaceMyRules
                 if (ov.ExtraTraits != null)
                     allApplied &= TrySetStringCollection(api, modelData, "ExtraTraits", ov.ExtraTraits, fullCode);
 
-                if (ov.EnableAllSkinnableParts || ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0)
+                if (ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0)
                     allApplied &= TryApplySkinnableParts(api, customModels, modelData, ov, fullCode);
             }
 
@@ -112,7 +112,6 @@ namespace MyRaceMyRules
         /// Remaining load-only cases (reported as "not fully applied" so they converge):
         ///   - Re-ENABLING a whole part: PlayerModelLib filters parts with enabled=false out at
         ///     load, so the object is not in memory to restore.
-        ///   - Raw "Set" property merges: cannot be replayed onto runtime objects generically.
         ///
         /// Parts a race does not define are never added — a race that cannot wear hair removes
         /// the part, and that intent is respected.
@@ -147,18 +146,8 @@ namespace MyRaceMyRules
                 }
             }
 
-            // Race-level "enable all" cannot be applied live (disabled parts aren't in memory).
-            if (ov.EnableAllSkinnableParts)
-            {
-                api.Logger.Notification("[myracemyrules] Live apply: ({0}) EnableAllSkinnableParts converges at next load.", codeForLog);
-                allApplied = false;
-            }
-
             foreach ((string partCode, SkinnablePartOverride pov) in ov.SkinnableParts)
             {
-                // Raw merges can't be replayed onto runtime objects.
-                if (pov.Set is { Count: > 0 }) allApplied = false;
-
                 // A part the race does not define is not added (see summary).
                 if (!skinParts.Contains(partCode))
                 {
@@ -172,13 +161,6 @@ namespace MyRaceMyRules
                 {
                     if (defaultParts == null) allApplied = false;
                     else allApplied &= MergeDefaultVariantsLive(api, skinParts, defaultParts, partCode, codeForLog);
-                }
-
-                if (pov.EnableAll)
-                {
-                    // Variants are all present (nothing filtered live); the part is in memory so
-                    // it was already enabled at load. Nothing further to do.
-                    continue;
                 }
 
                 if (pov.Enabled == false)
