@@ -22,6 +22,8 @@
     <Nullable>enable</Nullable>
     <AssemblyName>myracemyrules</AssemblyName>
     <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <BaseOutputPath>$(MSBuildProjectDirectory)\bin\</BaseOutputPath>
+    <OutDir>$(BaseOutputPath)$(Configuration)\Mods\$(AssemblyName)\</OutDir>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <!-- Local folder where you extract playermodellib.dll from its mod zip -->
@@ -75,28 +77,5 @@
     <None Include="assets/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="assets" />
   </ItemGroup>
 
-  <!-- Also copy built mod and assets into a Mods/<modname>/ folder beside the assembly so the game
-       can load the unpacked mod during debugging (bin/Debug/Mods/$(AssemblyName)/). -->
-  <Target Name="CopyModFiles" AfterTargets="Build">
-    <PropertyGroup>
-      <ModDestDir>$(OutDir)Mods\$(AssemblyName)\</ModDestDir>
-    </PropertyGroup>
-    <MakeDir Directories="$(ModDestDir)" />
-
-    <!-- Copy the compiled DLL -->
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModDestDir)" />
-
-    <!-- Copy mod metadata and icon if present in the project root -->
-    <Copy SourceFiles="$(ProjectDir)modinfo.json" DestinationFolder="$(ModDestDir)" Condition="Exists('$(ProjectDir)modinfo.json')" />
-    <Copy SourceFiles="$(ProjectDir)modicon.png" DestinationFolder="$(ModDestDir)" Condition="Exists('$(ProjectDir)modicon.png')" />
-
-    <!-- Copy assets recursively into Mods/<modname>/assets/... -->
-    <ItemGroup>
-      <_ModAssets Include="assets\**\*" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_ModAssets)"
-          DestinationFiles="@(_ModAssets->'$(ModDestDir)assets\%(RecursiveDir)%(Filename)%(Extension)')"
-          Condition="Exists('assets')" />
-  </Target>
 
 </Project>

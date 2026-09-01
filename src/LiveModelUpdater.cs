@@ -236,10 +236,14 @@ namespace MyRaceMyRules
                     if (vb != null)
                     {
                         var keepCodes = new HashSet<string>(filteredList.Select(v => (GetMember(v, "Code") as string) ?? ""), StringComparer.OrdinalIgnoreCase);
-                        foreach (object key in vb.Keys.Cast<object>().ToList())
+                        foreach (object? key in vb.Keys.Cast<object?>().ToList())
                         {
-                            string ks = key?.ToString() ?? "";
-                            if (!keepCodes.Contains(ks)) vb.Remove(key);
+                            string? ks = key?.ToString();
+                            if (ks is null) continue;
+                            if (!keepCodes.Contains(ks))
+                            {
+                                if (key != null) vb.Remove(key);
+                            }
                         }
                     }
                 }
