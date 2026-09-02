@@ -851,33 +851,55 @@ namespace MyRaceMyRules
             try { serverConfig = JsonConvert.DeserializeObject<MyRaceMyRulesConfig>(packet.ConfigJson); }
             catch (Exception e) { _capi.Logger.Warning("[myracemyrules] Could not parse synced config: {0}", e.Message); }
 
-            bool liveApplied = serverConfig != null && LiveModelUpdater.TryApply(_capi, serverConfig);
+            if (serverConfig == null) return;
 
-            if (liveApplied)
-            {
-                _appliedHash = packet.ConfigHash;
-                _appliedWasEmpty = serverConfig!.Overrides.Count == 0;
-                _capi.Logger.Notification("[myracemyrules] Live-applied server overrides for character creation (hash={0}).",
-                    packet.ConfigHash);
+            if (TryLiveApplyAndTrack(serverConfig, packet.ConfigHash))
                 return;
-            }
 
-            if (_appliedWasEmpty)
+            // Not applied yet — CustomModels may not be populated on this (cold) client.
+            // Poll briefly rather than assuming it's a permanent failure.
+            RetryLiveApply(serverConfig, packet.ConfigHash, attempt: 1);
+        }
+
+        private bool TryLiveApplyAndTrack(MyRaceMyRulesConfig serverConfig, string configHash)
+        {
+            if (_capi == null || !LiveModelUpdater.TryApply(_capi, serverConfig)) return false;
+
+            _appliedHash = configHash;
+            _appliedWasEmpty = serverConfig.Overrides.Count == 0;
+            _capi!.Logger.Notification("[myracemyrules] Live-applied server overrides for character creation (hash={0}).", configHash);
+            return true;
+        }
+
+        private void RetryLiveApply(MyRaceMyRulesConfig serverConfig, string configHash, int attempt)
+        {
+            const int maxAttempts = 12;      // ~5-6s total with the backoff below
+            const int delayMs = 250;
+
+            _capi!.Event.RegisterCallback(_ =>
             {
-                // First join and the live apply could not fully cover it: cache is written, so
-                // the next load converges. Stay silent per design (mod invisible to players).
-                _capi.Logger.Notification("[myracemyrules] Received server config on empty cache; live apply incomplete, " +
-                    "cached for next load (server={0}).", packet.ConfigHash);
-                return;
-            }
+                if (TryLiveApplyAndTrack(serverConfig, configHash))
+                    return;
 
-            // The client applied non-empty overrides this session, they are stale, and the
-            // live apply could not fully correct them — tell the player to reconnect.
-            _capi.ShowChatMessage(
-                "[My Race My Rules] Race overrides on this server differ from your current session. " +
-                "Reconnect (or reload the world) to apply them before creating/resetting your character.");
-            _capi.Logger.Notification("[myracemyrules] Server config differs from applied; cached for next load. " +
-                "applied={0} server={1}", _appliedHash, packet.ConfigHash);
+                if (attempt < maxAttempts)
+                {
+                    RetryLiveApply(serverConfig, configHash, attempt + 1);
+                    return;
+                }
+
+                // Gave it several seconds; genuinely not going to happen this session.
+                if (_appliedWasEmpty)
+                {
+                    _capi.Logger.Notification("[myracemyrules] Live apply timed out; cached for next load.");
+                }
+                else
+                {
+                    _capi.ShowChatMessage(
+                        "[My Race My Rules] Race overrides on this server differ from your current session. " +
+                        "Reconnect (or reload the world) to apply them before creating/resetting your character.");
+                    _capi.Logger.Notification("[myracemyrules] Live apply timed out after {0} retries; cached for next load.", attempt);
+                }
+            }, delayMs);
         }
 
         /// <summary>
