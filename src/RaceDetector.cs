@@ -13,7 +13,7 @@ namespace MyRaceMyRules
     public class DetectedRace
     {
         public string Domain = "";          // e.g. "racialequality" ("" for the default seraph)
-        public string ModelCode = "";       // e.g. "orc" / "seraph"
+        public string ModelCode = "";       // e.g. "ork" / "seraph"
         public string AssetPath = "";        // asset holding the model settings
         public string FullCode => Domain.Length == 0 ? ModelCode : $"{Domain}:{ModelCode}";
 
@@ -28,6 +28,10 @@ namespace MyRaceMyRules
         public float[]? SizeRange;           // [min, max]
         public float? EyeHeight;
         public float[]? CollisionBox;        // [width, height]
+        public float? MinEyeHeight;
+        public float? MaxEyeHeight;
+        public float[]? MinCollisionBox;     // [width, height]
+        public float[]? MaxCollisionBox;     // [width, height]
         public bool? Enabled;
         public List<string>? AvailableClasses;
         public List<string>? ExtraTraits;
@@ -43,7 +47,7 @@ namespace MyRaceMyRules
     /// LoadDefault): its model settings live in playermodellib:config/default-model-config.json
     /// under the key "seraph", while its skin parts (hairstyles, facial hair,
     /// colors) come from the vanilla player entity: game:entities/humanoid/player.json →
-    /// attributes.skinnableParts. EyeHeight/CollisionBox for seraph come from the entity too.
+    /// attributes.skinnableParts. Eye-height and collision ranges come from the model config.
     /// </summary>
     public static class RaceDetector
     {
@@ -125,6 +129,10 @@ namespace MyRaceMyRules
                         SizeRange = ReadFloatArray(modelObj, "SizeRange"),
                         EyeHeight = ReadFloat(modelObj, "EyeHeight"),
                         CollisionBox = ReadFloatArray(modelObj, "CollisionBox"),
+                        MinEyeHeight = ReadFloat(modelObj, "MinEyeHeight") ?? ReadFloat(modelObj, "EyeHeight"),
+                        MaxEyeHeight = ReadFloat(modelObj, "MaxEyeHeight") ?? ReadFloat(modelObj, "EyeHeight"),
+                        MinCollisionBox = ReadFloatArray(modelObj, "MinCollisionBox") ?? ReadFloatArray(modelObj, "CollisionBox"),
+                        MaxCollisionBox = ReadFloatArray(modelObj, "MaxCollisionBox") ?? ReadFloatArray(modelObj, "CollisionBox"),
                         Enabled = ReadBool(modelObj, "Enabled"),
                         AvailableClasses = ReadStringList(modelObj, "AvailableClasses"),
                         ExtraTraits = ReadStringList(modelObj, "ExtraTraits"),
@@ -229,7 +237,7 @@ namespace MyRaceMyRules
             foreach (string candidate in PlayerEntityPathCandidates)
             {
                 if (api.Assets.TryGet(new AssetLocation(candidate)) is IAsset direct)
-                    return JObject.Parse(direct.ToText());
+                return JObject.Parse(direct.ToText());
             }
 
             if (TryLoadPlayerEntityJsonFromDisk(out JObject? fsJson, out _))
@@ -271,14 +279,14 @@ namespace MyRaceMyRules
                 {
                     string full = Path.Combine(root, rel);
                     if (File.Exists(full))
+                {
+                    try
                     {
-                        try
-                        {
                             json = JObject.Parse(File.ReadAllText(full));
                             resolvedPath = full;
-                            return true;
-                        }
-                        catch { }
+                        return true;
+                    }
+                    catch { }
                     }
                 }
             }

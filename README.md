@@ -37,7 +37,9 @@ Everything lives in one file on the **server**, created for you on first run:
 |---|---|
 | `SizeRange` — `[min, max]` | How short or tall players can make themselves |
 | `EyeHeight` | Where the camera sits |
+| `MinEyeHeight` / `MaxEyeHeight` | The minimum and maximum camera height |
 | `CollisionBox` — `[width, height]` | The player's physical size |
+| `MinCollisionBox` / `MaxCollisionBox` — `[width, height]` | The minimum and maximum physical size |
 | `Enabled` | Whether the race appears in character creation |
 | `AvailableClasses` | Which classes the race can pick (`[]` = all) |
 | `ExtraTraits` | Traits granted on top of the class |
@@ -45,7 +47,7 @@ Everything lives in one file on the **server**, created for you on first run:
 
 ### Example
 
-Orcs who can be tiny or towering with all haircolors allowed, no dwarves, and a plainer seraph:
+Orks who can be tiny or towering with all haircolors allowed, no dwarves, and a plainer seraph:
 
 ```json
 {
@@ -74,7 +76,7 @@ Orcs who can be tiny or towering with all haircolors allowed, no dwarves, and a 
 - Don't guess at codes. `/myracemyrules` lists every race the mod found, and
   `/myracemyrules <racecode>` lists that race's appearance sections and every variant code in
   them. Both need the `controlserver` privilege.
-- **Include a setting to change it, leave it out to keep the race mod's value.** There's no
+- **Include a setting to change it, leave it null to keep the race mod's value.** There's no
   separate on/off switch — presence is the switch.
 
 ### Putting options back
@@ -98,13 +100,11 @@ Race-wide flags run first, so "give me everything, then take one thing away" wor
 }
 ```
 
-- The full list comes from the game itself, so new hairstyles and colors from game updates are
+- The full list comes from the game itself, so new options from game updates are
   included automatically — nothing for you to maintain.
 - **A section a race removed entirely is left alone.** Races that can't wear hair delete the
   hairstyle section rather than emptying it, so these settings only restore options inside
   sections the race still has.
-- All of it applies on a player's **first connect**, including someone brand new making their
-  first character.
 
 ### Appearance section options
 
@@ -117,9 +117,11 @@ Race-wide flags run first, so "give me everything, then take one thing away" wor
 
 Every field a race block accepts:
 
-- `SizeRange` — `[min, max]`
-- `EyeHeight` — a number
-- `CollisionBox` — `[width, height]`
+- `SizeRange` — `[min, max]`  (not configurable for seraph)
+- `EyeHeight` — a number (not configurable for seraph)
+- `MinEyeHeight` / `MaxEyeHeight` — numbers  (not configurable for seraph)
+- `CollisionBox` — `[width, height]` (not configurable for seraph)
+- `MinCollisionBox` / `MaxCollisionBox` — `[width, height]`  (not configurable for seraph)
 - `Enabled` — `true` / `false`
 - `AvailableClasses` — list of class codes (`[]` means all)
 - `ExtraTraits` — list of trait codes
@@ -128,7 +130,7 @@ Every field a race block accepts:
 
 ### Applying changes
 
-Edit the file, then restart the server or reload the world. Players pick the new settings up
+Edit the file or use the console commands to make changes, then restart the server or reload the world. Players pick the new settings up
 when they connect — you don't need to tell them anything.
 
 ### Commands
@@ -140,8 +142,8 @@ when they connect — you don't need to tell them anything.
 | `/myracemyrules <racecode>` | `controlserver` | Lists that race's appearance sections and their option codes |
 | `/myracemyrules <racecode> enable` | `controlserver` | Enables the race in character creation |
 | `/myracemyrules <racecode> disable` | `controlserver` | Disables the race in character creation |
-| `/myracemyrules <racecode> eyeheight <value>` | `controlserver` | Sets the eye height |
-| `/myracemyrules <racecode> collision <width> <height>` | `controlserver` | Sets the collision box |
+| `/myracemyrules <racecode> eyeheight <baseValue>` | `controlserver` | Sets the base eye height |
+| `/myracemyrules <racecode> collision <width> <height>` | `controlserver` | Sets the base collision box |
 | `/myracemyrules <racecode> sizerange <min> <max>` | `controlserver` | Sets the character size range; the minimum cannot be below `0.2` |
 | `/myracemyrules <racecode> enableall <part>` | `controlserver` | Restores all default variants for one appearance section |
 | `/myracemyrules all sizerange <min> <max>` | `controlserver` | Sets the size range for every detected race |
@@ -157,3 +159,7 @@ race's original setting.
   way to alter or work around them.
 - `EyeHeight` and `CollisionBox` settle in on a player's next connect rather than immediately.
   Neither affects character creation, so it isn't something players run into.
+- `eyeheight` and `collision` console commands set the base values, then multiply those values 
+  by the race SizeRange to derive the Min and Max values. These Min and Max values can be 
+  manually altered in the JSON config file if needed but will be reset if the console command
+  is used again.

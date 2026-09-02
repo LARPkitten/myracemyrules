@@ -32,9 +32,13 @@ namespace MyRaceMyRules
         public float[]? SizeRange;
 
         /// <summary>Eye/camera height. Vanilla default is 1.7.</summary>
+        public float? MinEyeHeight;
+        public float? MaxEyeHeight;
         public float? EyeHeight;
 
         /// <summary>Collision box, as [width, height]. Vanilla default is [0.6, 1.85].</summary>
+        public float[]? MinCollisionBox;
+        public float[]? MaxCollisionBox;
         public float[]? CollisionBox;
 
         // ----- Character-creation options -----

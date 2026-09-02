@@ -285,11 +285,19 @@ namespace MyRaceMyRules
 
             if (string.Equals(action, "sizerange", StringComparison.OrdinalIgnoreCase))
             {
+                if (string.Equals(first, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Error("SizeRange cannot be edited for seraph.");
+
+                if (!GetTargetRaceCodes(first).Any())
+                    return TextCommandResult.Error($"Race '{first}' is not detected on this server. Use /myracemyrules to list detected races.");
+
                 if (args.ArgCount >= 3 && string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                     {
-                        var allTargets = GetTargetRaceCodes(first);
+                        var allTargets = GetTargetRaceCodes(first)
+                            .Where(race => !string.Equals(race, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
                         foreach (var race in allTargets)
                             SetDefaultSizeRange(api, race);
                         return TextCommandResult.Success($"Reset size range to default for {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
@@ -305,7 +313,9 @@ namespace MyRaceMyRules
 
                 if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                 {
-                    var allTargets = GetTargetRaceCodes(first);
+                    var allTargets = GetTargetRaceCodes(first)
+                        .Where(race => !string.Equals(race, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
                     foreach (var race in allTargets)
                     {
                         float targetMin = min;
@@ -333,12 +343,17 @@ namespace MyRaceMyRules
 
             if (string.Equals(action, "eyeheight", StringComparison.OrdinalIgnoreCase))
             {
-                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race eyeheight float");
+                if (string.Equals(first, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Error("EyeHeight cannot be edited for seraph.");
+
+                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race eyeheight baseValue");
                 if (string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                     {
-                        var allTargets = GetTargetRaceCodes(first);
+                        var allTargets = GetTargetRaceCodes(first)
+                            .Where(race => !string.Equals(race, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
                         foreach (var race in allTargets)
                             SetDefaultEyeHeight(api, race);
                         return TextCommandResult.Success($"Reset eye height to default for {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
@@ -346,19 +361,46 @@ namespace MyRaceMyRules
 
                     return TextCommandResult.Success(SetDefaultEyeHeight(api, first));
                 }
-                if (!float.TryParse(Convert.ToString(args[2]), out float value))
+                if (!float.TryParse(Convert.ToString(args[2]), out float baseEyeHeight))
                     return TextCommandResult.Error("Eye height must be numeric.");
-                return TextCommandResult.Success(SetEyeHeight(api, first, value));
+
+                if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    var allTargets = GetTargetRaceCodes(first)
+                        .Where(race => !string.Equals(race, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    foreach (var raceCode in allTargets)
+                    {
+                        DetectedRace? race = DetectedRaces.FirstOrDefault(r =>
+                            string.Equals(r.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+                        if (race?.SizeRange is not { Length: 2 }) continue;
+                        float[] values = ScaleBySizeRange(race, baseEyeHeight);
+                        SetEyeHeight(api, raceCode, baseEyeHeight, values[0], values[1]);
+                    }
+                    return TextCommandResult.Success($"Applied eye height base {baseEyeHeight} to {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
+                }
+
+                DetectedRace? eyeRace = DetectedRaces.FirstOrDefault(r =>
+                    string.Equals(r.FullCode, first, StringComparison.OrdinalIgnoreCase));
+                if (eyeRace?.SizeRange is not { Length: 2 })
+                    return TextCommandResult.Error($"Race '{first}' has no valid SizeRange.");
+                float[] eyeHeightRange = ScaleBySizeRange(eyeRace, baseEyeHeight);
+                return TextCommandResult.Success(SetEyeHeight(api, first, baseEyeHeight, eyeHeightRange[0], eyeHeightRange[1]));
             }
 
             if (string.Equals(action, "collision", StringComparison.OrdinalIgnoreCase))
             {
-                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race collision x y");
+                if (string.Equals(first, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Error("CollisionBox cannot be edited for seraph.");
+
+                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race collision width height");
                 if (string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                     {
-                        var allTargets = GetTargetRaceCodes(first);
+                        var allTargets = GetTargetRaceCodes(first)
+                            .Where(race => !string.Equals(race, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
                         foreach (var race in allTargets)
                             SetDefaultCollisionBox(api, race);
                         return TextCommandResult.Success($"Reset collision box to default for {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
@@ -366,11 +408,33 @@ namespace MyRaceMyRules
 
                     return TextCommandResult.Success(SetDefaultCollisionBox(api, first));
                 }
-                if (args.ArgCount < 4) return TextCommandResult.Error("Usage: /myracemyrules mod:race collision x y");
-                if (!float.TryParse(Convert.ToString(args[2]), out float x) ||
-                    !float.TryParse(Convert.ToString(args[3]), out float y))
-                    return TextCommandResult.Error("Collision box values must be numeric.");
-                return TextCommandResult.Success(SetCollisionBox(api, first, x, y));
+                if (args.ArgCount < 4 ||
+                    !float.TryParse(Convert.ToString(args[2]), out float baseWidth) ||
+                    !float.TryParse(Convert.ToString(args[3]), out float baseHeight))
+                    return TextCommandResult.Error("Collision box requires two numeric base values: width height.");
+
+                if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    var allTargets = GetTargetRaceCodes(first)
+                        .Where(race => !string.Equals(race, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    foreach (var raceCode in allTargets)
+                    {
+                        DetectedRace? race = DetectedRaces.FirstOrDefault(r =>
+                            string.Equals(r.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+                        if (race?.SizeRange is not { Length: 2 }) continue;
+                        float[][] values = ScaleCollisionBySizeRange(race, baseWidth, baseHeight);
+                        SetCollisionBox(api, raceCode, [baseWidth, baseHeight], values[0], values[1]);
+                    }
+                    return TextCommandResult.Success($"Applied collision box base=[{baseWidth}, {baseHeight}] to {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
+                }
+
+                DetectedRace? collisionRace = DetectedRaces.FirstOrDefault(r =>
+                    string.Equals(r.FullCode, first, StringComparison.OrdinalIgnoreCase));
+                if (collisionRace?.SizeRange is not { Length: 2 })
+                    return TextCommandResult.Error($"Race '{first}' has no valid SizeRange.");
+                float[][] collisionRange = ScaleCollisionBySizeRange(collisionRace, baseWidth, baseHeight);
+                return TextCommandResult.Success(SetCollisionBox(api, first, [baseWidth, baseHeight], collisionRange[0], collisionRange[1]));
             }
 
             if (string.Equals(action, "disable", StringComparison.OrdinalIgnoreCase))
@@ -416,40 +480,71 @@ namespace MyRaceMyRules
             return $"Race '{raceCode}' size range reset to default.";
         }
 
-        private string SetEyeHeight(ICoreServerAPI api, string raceCode, float value)
+        private static float RoundToHundredth(float value) =>
+            (float)Math.Round(value, 2, MidpointRounding.AwayFromZero);
+
+        private static float[] ScaleBySizeRange(DetectedRace race, float baseValue)
+        {
+            return
+            [
+                RoundToHundredth(baseValue * race.SizeRange![0]),
+                RoundToHundredth(baseValue * race.SizeRange[1])
+            ];
+        }
+
+        private static float[][] ScaleCollisionBySizeRange(DetectedRace race, float baseWidth, float baseHeight)
+        {
+            float[] width = ScaleBySizeRange(race, baseWidth);
+            float[] height = ScaleBySizeRange(race, baseHeight);
+            return
+            [
+                [width[0], height[0]],
+                [width[1], height[1]]
+            ];
+        }
+
+        private string SetEyeHeight(ICoreServerAPI api, string raceCode, float baseValue, float min, float max)
         {
             var ov = GetOrCreateOverride(raceCode);
-            ov.EyeHeight = value;
+            ov.EyeHeight = baseValue;
+            ov.MinEyeHeight = min;
+            ov.MaxEyeHeight = max;
             SaveConfig(api);
             ReapplyOverrides(api);
-            return $"Race '{raceCode}' eye height set to {value}.";
+            return $"Race '{raceCode}' eye height set to {baseValue} (Range: [{min}, {max}]).";
         }
 
         private string SetDefaultEyeHeight(ICoreServerAPI api, string raceCode)
         {
             var ov = GetOrCreateOverride(raceCode);
             ov.EyeHeight = null;
+            ov.MinEyeHeight = null;
+            ov.MaxEyeHeight = null;
             SaveConfig(api);
             ReapplyOverrides(api);
-            return $"Race '{raceCode}' eye height reset to default.";
+            return $"Race '{raceCode}' eye height range reset to default.";
         }
 
-        private string SetCollisionBox(ICoreServerAPI api, string raceCode, float x, float y)
+        private string SetCollisionBox(ICoreServerAPI api, string raceCode, float[] baseValue, float[] min, float[] max)
         {
             var ov = GetOrCreateOverride(raceCode);
-            ov.CollisionBox = [x, y];
+            ov.CollisionBox = baseValue;
+            ov.MinCollisionBox = min;
+            ov.MaxCollisionBox = max;
             SaveConfig(api);
             ReapplyOverrides(api);
-            return $"Race '{raceCode}' collision box set to [{x}, {y}].";
+            return $"Race '{raceCode}' collision box set to {string.Join(", ", baseValue)} (Range: [{string.Join(", ", min)}, {string.Join(", ", max)}]).";
         }
 
         private string SetDefaultCollisionBox(ICoreServerAPI api, string raceCode)
         {
             var ov = GetOrCreateOverride(raceCode);
             ov.CollisionBox = null;
+            ov.MinCollisionBox = null;
+            ov.MaxCollisionBox = null;
             SaveConfig(api);
             ReapplyOverrides(api);
-            return $"Race '{raceCode}' collision box reset to default.";
+            return $"Race '{raceCode}' collision box range reset to default.";
         }
 
         private string SetEnableAllForPart(ICoreServerAPI api, string raceCode, string partCode)
@@ -522,7 +617,9 @@ namespace MyRaceMyRules
             int count = 0;
             if (overrideEntry.SizeRange != null) count++;
             if (overrideEntry.EyeHeight.HasValue) count++;
+            if (overrideEntry.MinEyeHeight.HasValue || overrideEntry.MaxEyeHeight.HasValue) count++;
             if (overrideEntry.CollisionBox != null) count++;
+            if (overrideEntry.MinCollisionBox != null || overrideEntry.MaxCollisionBox != null) count++;
             if (overrideEntry.Enabled.HasValue) count++;
             if (overrideEntry.AvailableClasses != null) count++;
             if (overrideEntry.ExtraTraits != null) count++;
@@ -548,8 +645,8 @@ namespace MyRaceMyRules
             sb.AppendLine("  /myracemyrules mod:race");
             sb.AppendLine("  /myracemyrules mod:race enable");
             sb.AppendLine("  /myracemyrules mod:race disable");
-            sb.AppendLine("  /myracemyrules mod:race eyeheight float");
-            sb.AppendLine("  /myracemyrules mod:race collision x y");
+            sb.AppendLine("  /myracemyrules mod:race eyeheight baseValue");
+            sb.AppendLine("  /myracemyrules mod:race collision width height");
             sb.AppendLine("  /myracemyrules mod:race sizerange min max");
             sb.AppendLine("  /myracemyrules mod:race enableall part");
             sb.AppendLine("  /myracemyrules all sizerange min max");
@@ -559,8 +656,9 @@ namespace MyRaceMyRules
             sb.AppendLine("Notes:");
             sb.AppendLine("  - 'sizerange' enforces a minimum of 0.2");
             sb.AppendLine("  - Use 'default' for eyeheight, collision, or sizerange to reset to the default value");
+            sb.AppendLine("  - 'eyeheight' and 'collision' also scale by the race's SizeRange to produce a min/max range");
             return sb.ToString();
-        }
+        }  
 
         private string DescribeRaces()
         {
@@ -600,8 +698,16 @@ namespace MyRaceMyRules
             sb.AppendLine($"AvailableClasses: {availableClassesText}");
             sb.AppendLine($"ExtraTraits: {extraTraitsText}");
             sb.AppendLine($"SizeRange: {(race.SizeRange is null ? "(not specified)" : $"[{string.Join(", ", race.SizeRange)}]")}");
+            string eyeHeightText = race.MinEyeHeight.HasValue || race.MaxEyeHeight.HasValue
+                ? $"[{race.MinEyeHeight?.ToString() ?? "-"}, {race.MaxEyeHeight?.ToString() ?? "-"}]"
+                : "(not specified)";
+            string collisionBoxText = race.MinCollisionBox != null || race.MaxCollisionBox != null
+                ? $"min=[{(race.MinCollisionBox == null ? "-" : string.Join(", ", race.MinCollisionBox))}], max=[{(race.MaxCollisionBox == null ? "-" : string.Join(", ", race.MaxCollisionBox))}]"
+                : "(not specified)";
             sb.AppendLine($"EyeHeight: {(race.EyeHeight.HasValue ? race.EyeHeight.Value.ToString() : "(not specified)")}");
+            sb.AppendLine($"EyeHeight Range: {eyeHeightText}");
             sb.AppendLine($"CollisionBox: {(race.CollisionBox is null ? "(not specified)" : $"[{string.Join(", ", race.CollisionBox)}]")}");
+            sb.AppendLine($"CollisionBox Range: {collisionBoxText}");
             sb.AppendLine($"Skin parts ({race.SkinParts.Count}):");
             sb.AppendLine($"=================================");
             foreach ((string code, List<string> variants) in race.SkinParts)
@@ -627,16 +733,35 @@ namespace MyRaceMyRules
 
         private void LoadServerConfig(ICoreAPI api)
         {
-            _seededInitialRaces = IsServerConfigMissing(api);
+            bool configMissing = IsServerConfigMissing(api);
+            _seededInitialRaces = configMissing;
 
             try
             {
-                Config = api.LoadModConfig<MyRaceMyRulesConfig>(ServerConfigFile) ?? new MyRaceMyRulesConfig();
+                MyRaceMyRulesConfig? loadedConfig = api.LoadModConfig<MyRaceMyRulesConfig>(ServerConfigFile);
+                if (loadedConfig == null)
+                {
+                    if (!configMissing)
+                    {
+                        api.Logger.Error("[myracemyrules] Server config could not be read and was left unchanged. Repair '{0}' and restart the world.",
+                            ServerConfigFile);
+                        Config = new MyRaceMyRulesConfig();
+                        _seededInitialRaces = false;
+                        return;
+                    }
+
+                    loadedConfig = new MyRaceMyRulesConfig();
+                }
+
+                Config = loadedConfig;
             }
             catch (Exception e)
             {
-                api.Logger.Error("[myracemyrules] Failed to load server config, using defaults: {0}", e);
+                api.Logger.Error("[myracemyrules] Failed to load server config; the existing file was left unchanged. Repair '{0}' and restart the world: {1}",
+                    ServerConfigFile, e);
                 Config = new MyRaceMyRulesConfig();
+                _seededInitialRaces = false;
+                return;
             }
 
             SanitizeConfig(api, Config);
@@ -651,7 +776,8 @@ namespace MyRaceMyRules
             foreach (var pair in config.Overrides)
             {
                 var ov = pair.Value;
-                if (ov == null || ov.SizeRange == null || ov.SizeRange.Length != 2) continue;
+                if (ov == null) continue;
+                if (ov.SizeRange == null || ov.SizeRange.Length != 2) continue;
                 if (ov.SizeRange[0] < MinSizeRangeMin)
                 {
                     api.Logger.Error("[myracemyrules] Override for '{0}' had a sizeRange minimum of {1}; changing to {2} to enforce the minimum allowed value.",
@@ -902,8 +1028,21 @@ namespace MyRaceMyRules
             if (IsPair(api, sizeRange, "SizeRange", race.FullCode))
                 model["SizeRange"] = new JArray(sizeRange![0], sizeRange[1]);
             if (ov.EyeHeight.HasValue) model["EyeHeight"] = ov.EyeHeight.Value;
+            if (ov.MinEyeHeight.HasValue || ov.MaxEyeHeight.HasValue)
+            {
+                if (ov.MinEyeHeight.HasValue) model["MinEyeHeight"] = ov.MinEyeHeight.Value;
+                if (ov.MaxEyeHeight.HasValue) model["MaxEyeHeight"] = ov.MaxEyeHeight.Value;
+            }
+
             if (IsPair(api, ov.CollisionBox, "CollisionBox", race.FullCode))
                 model["CollisionBox"] = new JArray(ov.CollisionBox![0], ov.CollisionBox[1]);
+            if (ov.MinCollisionBox != null || ov.MaxCollisionBox != null)
+            {
+                if (IsPair(api, ov.MinCollisionBox, "MinCollisionBox", race.FullCode))
+                    model["MinCollisionBox"] = new JArray(ov.MinCollisionBox![0], ov.MinCollisionBox[1]);
+                if (IsPair(api, ov.MaxCollisionBox, "MaxCollisionBox", race.FullCode))
+                    model["MaxCollisionBox"] = new JArray(ov.MaxCollisionBox![0], ov.MaxCollisionBox[1]);
+            }
             if (ov.Enabled.HasValue) model["Enabled"] = ov.Enabled.Value;
             if (ov.AvailableClasses != null) model["AvailableClasses"] = new JArray(ov.AvailableClasses);
             if (ov.ExtraTraits != null) model["ExtraTraits"] = new JArray(ov.ExtraTraits);
@@ -924,7 +1063,9 @@ namespace MyRaceMyRules
             bool ok = true;
 
             // 1) Model settings (SizeRange, classes, traits, Enabled).
-            if (ov.SizeRange != null || ov.Enabled.HasValue || ov.AvailableClasses != null || ov.ExtraTraits != null)
+            if (ov.SizeRange != null || ov.MinEyeHeight.HasValue || ov.MaxEyeHeight.HasValue ||
+                ov.MinCollisionBox != null || ov.MaxCollisionBox != null || ov.Enabled.HasValue ||
+                ov.AvailableClasses != null || ov.ExtraTraits != null)
             {
                 JObject? cfgRoot = LoadAssetJson(api, RaceDetector.SeraphModelConfigPath);
                 if (cfgRoot?[RaceDetector.SeraphModelConfigKey] is JObject cfg)
@@ -932,6 +1073,15 @@ namespace MyRaceMyRules
                     var sizeRange = ClampMinSizeRange(api, ov.SizeRange, race.FullCode, "SizeRange");
                     if (IsPair(api, sizeRange, "SizeRange", race.FullCode))
                         cfg["SizeRange"] = new JArray(sizeRange![0], sizeRange[1]);
+                    if (ov.EyeHeight.HasValue) cfg["EyeHeight"] = ov.EyeHeight.Value;
+                    if (ov.MinEyeHeight.HasValue) cfg["MinEyeHeight"] = ov.MinEyeHeight.Value;
+                    if (ov.MaxEyeHeight.HasValue) cfg["MaxEyeHeight"] = ov.MaxEyeHeight.Value;
+                    if (IsPair(api, ov.CollisionBox, "CollisionBox", race.FullCode))
+                        cfg["CollisionBox"] = new JArray(ov.CollisionBox![0], ov.CollisionBox[1]);
+                    if (IsPair(api, ov.MinCollisionBox, "MinCollisionBox", race.FullCode))
+                        cfg["MinCollisionBox"] = new JArray(ov.MinCollisionBox![0], ov.MinCollisionBox[1]);
+                    if (IsPair(api, ov.MaxCollisionBox, "MaxCollisionBox", race.FullCode))
+                        cfg["MaxCollisionBox"] = new JArray(ov.MaxCollisionBox![0], ov.MaxCollisionBox[1]);
                     if (ov.Enabled.HasValue) cfg["Enabled"] = ov.Enabled.Value;
                     if (ov.AvailableClasses != null) cfg["AvailableClasses"] = new JArray(ov.AvailableClasses);
                     if (ov.ExtraTraits != null) cfg["ExtraTraits"] = new JArray(ov.ExtraTraits);
@@ -946,20 +1096,10 @@ namespace MyRaceMyRules
 
             // 2) Entity-level values + skin parts (hairstyles, facial hair, colors).
             bool wantsSkinParts = ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0;
-            if (ov.EyeHeight.HasValue || ov.CollisionBox != null || wantsSkinParts)
+            if (wantsSkinParts)
             {
                 JObject? entity = LoadAssetJson(api, RaceDetector.PlayerEntityPath);
                 if (entity == null) return false;
-
-                if (ov.EyeHeight.HasValue) entity["eyeHeight"] = ov.EyeHeight.Value;
-                if (IsPair(api, ov.CollisionBox, "CollisionBox", race.FullCode))
-                {
-                    entity["collisionBoxSize"] = new JObject
-                    {
-                        ["x"] = ov.CollisionBox![0],
-                        ["y"] = ov.CollisionBox[1]
-                    };
-                }
 
                 if (wantsSkinParts)
                 {
