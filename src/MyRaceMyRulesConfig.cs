@@ -16,7 +16,7 @@ namespace MyRaceMyRules
         /// left untouched. Run /myracemyrules in-game (as an admin) to list the exact race
         /// codes available.
         /// </summary>
-        public Dictionary<string, RaceOverrideEntry> Overrides = new();
+        public Dictionary<string, RaceOverrideEntry> Overrides = [];
     }
 
     /// <summary>
@@ -73,7 +73,7 @@ namespace MyRaceMyRules
         /// player entity's skinnableParts. Run "/myracemyrules &lt;racecode&gt;" to list a
         /// race's part codes and variant codes.
         /// </summary>
-        public Dictionary<string, SkinnablePartOverride> SkinnableParts = new();
+        public Dictionary<string, SkinnablePartOverride> SkinnableParts = [];
     }
 
     /// <summary>

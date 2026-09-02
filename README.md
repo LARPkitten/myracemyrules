@@ -136,9 +136,20 @@ when they connect — you don't need to tell them anything.
 | Command | Privilege | What it does |
 |---|---|---|
 | `/myracemyrules` | `controlserver` | Lists the races found and which ones you're overriding |
+| `/myracemyrules help` | `controlserver` | Shows the command list |
 | `/myracemyrules <racecode>` | `controlserver` | Lists that race's appearance sections and their option codes |
+| `/myracemyrules <racecode> enable` | `controlserver` | Enables the race in character creation |
+| `/myracemyrules <racecode> disable` | `controlserver` | Disables the race in character creation |
+| `/myracemyrules <racecode> eyeheight <value>` | `controlserver` | Sets the eye height |
+| `/myracemyrules <racecode> collision <width> <height>` | `controlserver` | Sets the collision box |
+| `/myracemyrules <racecode> sizerange <min> <max>` | `controlserver` | Sets the character size range; the minimum cannot be below `0.2` |
+| `/myracemyrules <racecode> enableall <part>` | `controlserver` | Restores all default variants for one appearance section |
+| `/myracemyrules all sizerange <min> <max>` | `controlserver` | Sets the size range for every detected race |
+| `/myracemyrules all enableall <part>` | `controlserver` | Restores all default variants for one section on every detected race |
 
-Both are read-only.
+The `/mrmr` command is an alias for `/myracemyrules`, so all of the same forms are available
+with the shorter name. Use `default` instead of a value to remove that override and restore the
+race's original setting.
 
 ## Notes
 

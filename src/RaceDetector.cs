@@ -41,7 +41,7 @@ namespace MyRaceMyRules
     /// define. Custom models: assets/&lt;domain&gt;/config/customplayermodels/*.json, top-level
     /// keys = model codes. The default "seraph" model is special (per PlayerModelLib's
     /// LoadDefault): its model settings live in playermodellib:config/default-model-config.json
-    /// under the key "playermodellib:seraph", while its skin parts (hairstyles, facial hair,
+    /// under the key "seraph", while its skin parts (hairstyles, facial hair,
     /// colors) come from the vanilla player entity: game:entities/humanoid/player.json →
     /// attributes.skinnableParts. EyeHeight/CollisionBox for seraph come from the entity too.
     /// </summary>
@@ -50,11 +50,11 @@ namespace MyRaceMyRules
         private const string CategoryPath = "config/customplayermodels";
         public const string SeraphCode = "seraph";
         public const string SeraphModelConfigPath = "playermodellib:config/default-model-config.json";
-        public const string SeraphModelConfigKey = "playermodellib:seraph";
+        public const string SeraphModelConfigKey = "seraph";
         public const string PlayerEntityPath = "game:entities/humanoid/player.json";
 
         private static readonly string[] PlayerEntityPathCandidates =
-        {
+        [
             PlayerEntityPath,
             "game:entities/player.json",
             "game:entities/playerentity.json",
@@ -64,7 +64,7 @@ namespace MyRaceMyRules
             "entity/humanoid/player.json",
             "entity/humanoid/playerentity.json",
             "game:entities/humanoid/playerentity-humanoid.json"
-        };
+        ];
 
         /// <summary>
         /// Detect all races across all loaded mods, including the default seraph. Uses the
@@ -243,12 +243,18 @@ namespace MyRaceMyRules
             json = null;
             resolvedPath = null;
 
-            List<string> roots = new();
+            List<string> roots = [];
             string? vintageStory = Environment.GetEnvironmentVariable("VINTAGE_STORY");
             if (!string.IsNullOrWhiteSpace(vintageStory)) roots.Add(vintageStory);
 
-            roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VSLGameVersions", "1.22.7"));
-            roots.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "VSLInstallations", "1.22.7"));
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            roots.Add(Path.Combine(appData, "Vintagestory"));
+            roots.Add(Path.Combine(localAppData, "Vintagestory"));
+            roots.Add(AppContext.BaseDirectory);
+
+            AddLauncherRoots(roots, Path.Combine(appData, "VSLGameVersions"));
+            AddLauncherRoots(roots, Path.Combine(appData, "VSLInstallations"));
 
             foreach (string root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
             {
@@ -278,6 +284,19 @@ namespace MyRaceMyRules
             }
 
             return false;
+        }
+
+        private static void AddLauncherRoots(List<string> roots, string launcherRoot)
+        {
+            roots.Add(launcherRoot);
+            if (!Directory.Exists(launcherRoot)) return;
+
+            try
+            {
+                roots.AddRange(Directory.GetDirectories(launcherRoot));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
 
         /// <summary>Case-insensitive property lookup (asset JSON casing varies: vanilla lowercase, PML PascalCase).</summary>
@@ -317,15 +336,11 @@ namespace MyRaceMyRules
 
         private static bool IsMetaKey(string key)
         {
-            switch (key)
+            return key switch
             {
-                case "DisabledElementsByShape":
-                case "EnabledElementsByShape":
-                case "AnimationsMetaData":
-                    return true;
-                default:
-                    return false;
-            }
+                "DisabledElementsByShape" or "EnabledElementsByShape" or "AnimationsMetaData" => true,
+                _ => false,
+            };
         }
 
         private static float[]? ReadFloatArray(JObject o, string key)
@@ -335,7 +350,7 @@ namespace MyRaceMyRules
             foreach (var t in arr)
                 if (t.Type == JTokenType.Float || t.Type == JTokenType.Integer)
                     list.Add(t.Value<float>());
-            return list.Count > 0 ? list.ToArray() : null;
+            return list.Count > 0 ? [.. list] : null;
         }
 
         private static float? ReadFloat(JObject o, string key)

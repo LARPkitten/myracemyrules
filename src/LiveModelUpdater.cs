@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Vintagestory.API.Common;
-using PlayerModelLib;
 
 namespace MyRaceMyRules
 {
@@ -121,8 +120,7 @@ namespace MyRaceMyRules
         {
             bool allApplied = true;
 
-            IDictionary? skinParts = GetMember(modelData, "SkinParts") as IDictionary;
-            if (skinParts == null)
+            if (GetMember(modelData, "SkinParts") is not IDictionary skinParts)
             {
                 api.Logger.Warning("[myracemyrules] Live apply: 'SkinParts' not found on model data ({0}).", codeForLog);
                 return false;
@@ -214,8 +212,7 @@ namespace MyRaceMyRules
 
                     SetMemberValue(partObj, "Variants", newArr);
 
-                    var vb = GetMember(partObj, "VariantsByCode") as IDictionary;
-                    if (vb != null)
+                    if (GetMember(partObj, "VariantsByCode") is IDictionary vb)
                     {
                         var keepCodes = new HashSet<string>(filteredList.Select(v => (GetMember(v, "Code") as string) ?? ""), StringComparer.OrdinalIgnoreCase);
                         foreach (object? key in vb.Keys.Cast<object?>().ToList())
@@ -300,7 +297,7 @@ namespace MyRaceMyRules
                 var have = new HashSet<string>(existing.Cast<object?>().Select(v => (GetMember(v, "Code") as string) ?? "").Where(c => c.Length > 0), StringComparer.OrdinalIgnoreCase);
 
                 var toAdd = source.Cast<object?>()
-                    .Where(v => (GetMember(v, "Code") as string) is string code && code.Length > 0 && !have.Contains(code))
+                    .Where(v => GetMember(v, "Code") as string is string code && code.Length > 0 && !have.Contains(code))
                     .ToList();
 
                 if (toAdd.Count == 0) return true;
@@ -311,8 +308,7 @@ namespace MyRaceMyRules
 
                 SetMemberValue(targetObj, "Variants", newArr);
 
-                var vb = GetMember(targetObj, "VariantsByCode") as IDictionary;
-                if (vb != null)
+                if (GetMember(targetObj, "VariantsByCode") is IDictionary vb)
                 {
                     foreach (object? v in toAdd)
                     {
@@ -388,7 +384,7 @@ namespace MyRaceMyRules
             PropertyInfo? p = t.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
             if (p != null && p.CanWrite) { p.SetValue(target, value); return; }
             FieldInfo? f = t.GetField(name, BindingFlags.Public | BindingFlags.Instance);
-            if (f != null) f.SetValue(target, value);
+            f?.SetValue(target, value);
         }
 
         private static bool TrySet(ICoreAPI api, object target, string name, object value, string codeForLog)
@@ -445,8 +441,8 @@ namespace MyRaceMyRules
                 else
                 {
                     // Vector-ish type with a (float, float) constructor (e.g. OpenTK Vector2).
-                    ConstructorInfo? ctor = memberType.GetConstructor(new[] { typeof(float), typeof(float) });
-                    if (ctor != null) newValue = ctor.Invoke(new object[] { min, max });
+                    ConstructorInfo? ctor = memberType.GetConstructor([typeof(float), typeof(float)]);
+                    if (ctor != null) newValue = ctor.Invoke([min, max]);
                 }
 
                 if (newValue == null)

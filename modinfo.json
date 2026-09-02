@@ -1,16 +1,15 @@
 {
-  "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
   "type": "code",
   "modid": "myracemyrules",
   "name": "My Race My Rules",
   "authors": [ "RandomKitten" ],
-  "description": "Detects player races added by other mods (via PlayerModelLib) and lets you override their height and character-creation options through a config file. Server-authoritative on multiplayer.",
-  "version": "0.1.0",
+  "description": "Customize player races added by other mods (via PlayerModelLib). Server-authoritative on multiplayer.",
+  "version": "0.2.0",
   "side": "Universal",
   "requiredOnClient": true,
   "requiredOnServer": true,
   "dependencies": {
-    "game": "1.22.7",
+    "game": "1.22.0",
     "playermodellib": ""
   }
 }

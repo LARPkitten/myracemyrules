@@ -2,12 +2,12 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
-using Vintagestory.API.Config;
 using Vintagestory.API.Server;
 
 namespace MyRaceMyRules
@@ -47,6 +47,7 @@ namespace MyRaceMyRules
         private const string ServerConfigFile = Domain + ".json";
         private const string ChannelName = "myracemyrules.sync";
         private const string AdminPrivilege = "controlserver";
+        private const float MinSizeRangeMin = 0.2f;
 
         /// <summary>
         /// Upper bound on a synced config payload. Real configs are a few KB (they contain
@@ -61,7 +62,7 @@ namespace MyRaceMyRules
         /// </summary>
         public MyRaceMyRulesConfig Config = new();
 
-        public List<DetectedRace> DetectedRaces = new();
+        public List<DetectedRace> DetectedRaces = [];
 
         /// <summary>Hash of the config this side actually APPLIED at load (for change detection).</summary>
         private string _appliedHash = "";
@@ -75,6 +76,13 @@ namespace MyRaceMyRules
         private ICoreClientAPI? _capi;
         private ICoreServerAPI? _sapi;
         private IServerNetworkChannel? _serverChannel;
+
+        /// <summary>
+        /// True only when the server config file did not exist and had to be created. In that
+        /// startup case we seed every discovered race once so the operator can edit them in the
+        /// file without having to manually create entries. Later loads never mutate the config.
+        /// </summary>
+        private bool _seededInitialRaces;
 
         /// <summary>
         /// Pristine copy of the default race's (seraph's) skinnableParts, captured BEFORE any
@@ -133,6 +141,27 @@ namespace MyRaceMyRules
             // mutates the vanilla player entity JSON, which the game's registry loader parses
             // at ~ExecuteOrder 0.2 — during this same phase, after us (0.05). Custom-model
             // configs are read even later (PlayerModelLib AssetsFinalize, 0.21).
+            if (_seededInitialRaces)
+            {
+                foreach (var race in DetectedRaces)
+                {
+                    if (!Config.Overrides.ContainsKey(race.FullCode))
+                        Config.Overrides[race.FullCode] = new RaceOverrideEntry();
+                }
+
+                try
+                {
+                    api.StoreModConfig(Config, ServerConfigFile);
+                    api.Logger.Notification("[myracemyrules] Seeded initial config with {0} detected race(s).", Config.Overrides.Count);
+                }
+                catch (Exception e)
+                {
+                    api.Logger.Warning("[myracemyrules] Failed to save seeded initial race list: {0}", e.Message);
+                }
+
+                _seededInitialRaces = false;
+            }
+
             _appliedHash = HashConfig(Config);
             _appliedWasEmpty = Config.Overrides.Count == 0;
             ApplyOverrides(api);
@@ -150,16 +179,13 @@ namespace MyRaceMyRules
         /// </summary>
         public override void Dispose()
         {
-            if (_sapi != null)
-            {
-                _sapi.Event.PlayerJoin -= OnPlayerJoin;
-                _sapi = null;
-            }
+            _sapi?.Event.PlayerJoin -= OnPlayerJoin;
+            _sapi = null;
 
             _capi = null;
             _serverChannel = null;
             _defaultSkinnableParts = null;
-            DetectedRaces = new List<DetectedRace>();
+            DetectedRaces = [];
 
             base.Dispose();
         }
@@ -197,24 +223,359 @@ namespace MyRaceMyRules
                 .Create("myracemyrules")
                 .WithDescription("List detected races and overrides; give a race code to list its skin parts and variants")
                 .RequiresPrivilege(AdminPrivilege)
-                .WithArgs(sapi.ChatCommands.Parsers.OptionalWord("racecode"))
-                .HandleWith(args =>
+                .WithArgs(sapi.ChatCommands.Parsers.OptionalWord("racecode"),
+                    sapi.ChatCommands.Parsers.OptionalWord("command"),
+                    sapi.ChatCommands.Parsers.OptionalWord("value1"),
+                    sapi.ChatCommands.Parsers.OptionalWord("value2"))
+                .HandleWith(args => HandleRaceCommand(sapi, args));
+
+            sapi.ChatCommands
+                .Create("mrmr")
+                .WithDescription("Alias for /myracemyrules")
+                .RequiresPrivilege(AdminPrivilege)
+                .WithArgs(sapi.ChatCommands.Parsers.OptionalWord("racecode"),
+                    sapi.ChatCommands.Parsers.OptionalWord("command"),
+                    sapi.ChatCommands.Parsers.OptionalWord("value1"),
+                    sapi.ChatCommands.Parsers.OptionalWord("value2"))
+                .HandleWith(args => HandleRaceCommand(sapi, args));
+        }
+
+        private TextCommandResult HandleRaceCommand(ICoreServerAPI api, TextCommandCallingArgs args)
+        {
+            if (args == null || args.ArgCount == 0 || args[0] == null)
+                return TextCommandResult.Success(DescribeRaces());
+
+            string? first = Convert.ToString(args[0]);
+            if (string.IsNullOrWhiteSpace(first))
+                return TextCommandResult.Success(DescribeRaces());
+
+            if (string.Equals(first, "help", StringComparison.OrdinalIgnoreCase))
+                return TextCommandResult.Success(DescribeHelp());
+
+            if (string.Equals(first, "race", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(first, "races", StringComparison.OrdinalIgnoreCase))
+                return TextCommandResult.Success(DescribeRaces());
+
+            if (args.ArgCount == 1)
+                return TextCommandResult.Success(DescribeSkinParts(first));
+
+            string? action = args.ArgCount > 1 ? Convert.ToString(args[1]) : null;
+            if (string.IsNullOrWhiteSpace(action))
+                return TextCommandResult.Success(DescribeSkinParts(first));
+
+            if (string.Equals(action, "help", StringComparison.OrdinalIgnoreCase))
+                return TextCommandResult.Success(DescribeHelp());
+
+            if (string.Equals(action, "enableall", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race or all, then enableall part");
+                string partCode = Convert.ToString(args[2]) ?? "";
+
+                if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                 {
-                    string? raceCode = args[0] as string;
-                    return TextCommandResult.Success(
-                        raceCode == null ? DescribeRaces() : DescribeSkinParts(raceCode));
-                });
+                    var allTargets = GetTargetRaceCodes(first);
+                    foreach (var race in allTargets)
+                        SetEnableAllForPart(api, race, partCode);
+
+                    return TextCommandResult.Success($"Applied 'enableall {partCode}' to {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
+                }
+
+                return TextCommandResult.Success(SetEnableAllForPart(api, first, partCode));
+            }
+
+            if (string.Equals(action, "sizerange", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.ArgCount >= 3 && string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var allTargets = GetTargetRaceCodes(first);
+                        foreach (var race in allTargets)
+                            SetDefaultSizeRange(api, race);
+                        return TextCommandResult.Success($"Reset size range to default for {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
+                    }
+
+                    return TextCommandResult.Success(SetDefaultSizeRange(api, first));
+                }
+
+                if (args.ArgCount < 4) return TextCommandResult.Error("Usage: /myracemyrules mod:race or all, then sizerange min max");
+                if (!float.TryParse(Convert.ToString(args[2]), out float min) ||
+                    !float.TryParse(Convert.ToString(args[3]), out float max))
+                    return TextCommandResult.Error("Size range requires two numeric values.");
+
+                if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                {
+                    var allTargets = GetTargetRaceCodes(first);
+                    foreach (var race in allTargets)
+                    {
+                        float targetMin = min;
+                        if (targetMin < MinSizeRangeMin)
+                        {
+                            api.Logger.Error("[myracemyrules] Size range minimum for '{0}' was {1}; changing it to {2} to enforce the minimum allowed value.",
+                                race, targetMin, MinSizeRangeMin);
+                            targetMin = MinSizeRangeMin;
+                        }
+
+                        SetSizeRange(api, race, targetMin, max);
+                    }
+
+                    return TextCommandResult.Success($"Applied size range [{(min < MinSizeRangeMin ? MinSizeRangeMin : min)}, {max}] to {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
+                }
+
+                if (min < MinSizeRangeMin)
+                {
+                    api.Logger.Error("[myracemyrules] Size range minimum for '{0}' was {1}; changing it to {2} to enforce the minimum allowed value.",
+                        first, min, MinSizeRangeMin);
+                    min = MinSizeRangeMin;
+                }
+                return TextCommandResult.Success(SetSizeRange(api, first, min, max));
+            }
+
+            if (string.Equals(action, "eyeheight", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race eyeheight float");
+                if (string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var allTargets = GetTargetRaceCodes(first);
+                        foreach (var race in allTargets)
+                            SetDefaultEyeHeight(api, race);
+                        return TextCommandResult.Success($"Reset eye height to default for {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
+                    }
+
+                    return TextCommandResult.Success(SetDefaultEyeHeight(api, first));
+                }
+                if (!float.TryParse(Convert.ToString(args[2]), out float value))
+                    return TextCommandResult.Error("Eye height must be numeric.");
+                return TextCommandResult.Success(SetEyeHeight(api, first, value));
+            }
+
+            if (string.Equals(action, "collision", StringComparison.OrdinalIgnoreCase))
+            {
+                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race collision x y");
+                if (string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var allTargets = GetTargetRaceCodes(first);
+                        foreach (var race in allTargets)
+                            SetDefaultCollisionBox(api, race);
+                        return TextCommandResult.Success($"Reset collision box to default for {allTargets.Count} race(s): {string.Join(", ", allTargets)}.");
+                    }
+
+                    return TextCommandResult.Success(SetDefaultCollisionBox(api, first));
+                }
+                if (args.ArgCount < 4) return TextCommandResult.Error("Usage: /myracemyrules mod:race collision x y");
+                if (!float.TryParse(Convert.ToString(args[2]), out float x) ||
+                    !float.TryParse(Convert.ToString(args[3]), out float y))
+                    return TextCommandResult.Error("Collision box values must be numeric.");
+                return TextCommandResult.Success(SetCollisionBox(api, first, x, y));
+            }
+
+            if (string.Equals(action, "disable", StringComparison.OrdinalIgnoreCase))
+                return TextCommandResult.Success(SetEnabled(api, first, false));
+
+            if (string.Equals(action, "enable", StringComparison.OrdinalIgnoreCase))
+                return TextCommandResult.Success(SetEnabled(api, first, true));
+
+            return TextCommandResult.Success(DescribeSkinParts(first));
+        }
+
+        private string SetEnabled(ICoreServerAPI api, string raceCode, bool value)
+        {
+            var ov = GetOrCreateOverride(raceCode);
+            ov.Enabled = value;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' is now {(value ? "enabled" : "disabled")}.";
+        }
+
+        private string SetSizeRange(ICoreServerAPI api, string raceCode, float min, float max)
+        {
+            if (min < MinSizeRangeMin)
+            {
+                api.Logger.Error("[myracemyrules] Size range minimum for '{0}' was {1}; changing it to {2} to enforce the minimum allowed value.",
+                    raceCode, min, MinSizeRangeMin);
+                min = MinSizeRangeMin;
+            }
+
+            var ov = GetOrCreateOverride(raceCode);
+            ov.SizeRange = [min, max];
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' size range set to [{min}, {max}].";
+        }
+
+        private string SetDefaultSizeRange(ICoreServerAPI api, string raceCode)
+        {
+            var ov = GetOrCreateOverride(raceCode);
+            ov.SizeRange = null;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' size range reset to default.";
+        }
+
+        private string SetEyeHeight(ICoreServerAPI api, string raceCode, float value)
+        {
+            var ov = GetOrCreateOverride(raceCode);
+            ov.EyeHeight = value;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' eye height set to {value}.";
+        }
+
+        private string SetDefaultEyeHeight(ICoreServerAPI api, string raceCode)
+        {
+            var ov = GetOrCreateOverride(raceCode);
+            ov.EyeHeight = null;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' eye height reset to default.";
+        }
+
+        private string SetCollisionBox(ICoreServerAPI api, string raceCode, float x, float y)
+        {
+            var ov = GetOrCreateOverride(raceCode);
+            ov.CollisionBox = [x, y];
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' collision box set to [{x}, {y}].";
+        }
+
+        private string SetDefaultCollisionBox(ICoreServerAPI api, string raceCode)
+        {
+            var ov = GetOrCreateOverride(raceCode);
+            ov.CollisionBox = null;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' collision box reset to default.";
+        }
+
+        private string SetEnableAllForPart(ICoreServerAPI api, string raceCode, string partCode)
+        {
+            var ov = GetOrCreateOverride(raceCode);
+            ov.SkinnableParts.TryGetValue(partCode, out var part);
+            if (part == null)
+            {
+                part = new SkinnablePartOverride();
+                ov.SkinnableParts[partCode] = part;
+            }
+            part.IncludeDefaultVariants = true;
+            part.AllowedVariants = null;
+            part.RemoveVariants = null;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' part '{partCode}' set to include all default variants.";
+        }
+
+        private RaceOverrideEntry GetOrCreateOverride(string raceCode)
+        {
+            if (!Config.Overrides.TryGetValue(raceCode, out var ov))
+            {
+                ov = new RaceOverrideEntry();
+                Config.Overrides[raceCode] = ov;
+            }
+            return ov;
+        }
+
+        private void SaveConfig(ICoreServerAPI api)
+        {
+            try { api.StoreModConfig(Config, ServerConfigFile); }
+            catch (Exception e) { api.Logger.Warning("[myracemyrules] Failed to save config from chat command: {0}", e.Message); }
+        }
+
+        private void ReapplyOverrides(ICoreServerAPI api)
+        {
+            try
+            {
+                _defaultSkinnableParts = CaptureDefaultSkinnableParts(api);
+                ApplyOverrides(api);
+            }
+            catch (Exception e)
+            {
+                api.Logger.Warning("[myracemyrules] Failed to apply updated overrides from chat command: {0}", e.Message);
+            }
+            finally
+            {
+                _defaultSkinnableParts = null;
+            }
+        }
+
+        private List<string> GetTargetRaceCodes(string raceCode)
+        {
+            if (string.Equals(raceCode, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                return [.. DetectedRaces
+                    .Select(r => r.FullCode)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(code => code, StringComparer.OrdinalIgnoreCase)];
+            }
+
+            return [raceCode];
+        }
+
+        private static int CountRaceOverrides(RaceOverrideEntry? overrideEntry)
+        {
+            if (overrideEntry == null) return 0;
+
+            int count = 0;
+            if (overrideEntry.SizeRange != null) count++;
+            if (overrideEntry.EyeHeight.HasValue) count++;
+            if (overrideEntry.CollisionBox != null) count++;
+            if (overrideEntry.Enabled.HasValue) count++;
+            if (overrideEntry.AvailableClasses != null) count++;
+            if (overrideEntry.ExtraTraits != null) count++;
+            if (overrideEntry.IncludeAllDefaultVariants) count++;
+
+            foreach (var partOverride in overrideEntry.SkinnableParts.Values)
+            {
+                if (partOverride == null) continue;
+                if (partOverride.IncludeDefaultVariants) count++;
+                if (partOverride.Enabled.HasValue) count++;
+                if (partOverride.AllowedVariants != null) count++;
+                if (partOverride.RemoveVariants != null) count++;
+            }
+
+            return count;
+        }
+
+        private static string DescribeHelp()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("MyRaceMyRules commands:");
+            sb.AppendLine("  /myracemyrules help");
+            sb.AppendLine("  /myracemyrules mod:race");
+            sb.AppendLine("  /myracemyrules mod:race enable");
+            sb.AppendLine("  /myracemyrules mod:race disable");
+            sb.AppendLine("  /myracemyrules mod:race eyeheight float");
+            sb.AppendLine("  /myracemyrules mod:race collision x y");
+            sb.AppendLine("  /myracemyrules mod:race sizerange min max");
+            sb.AppendLine("  /myracemyrules mod:race enableall part");
+            sb.AppendLine("  /myracemyrules all sizerange min max");
+            sb.AppendLine("  /myracemyrules all enableall part");
+            sb.AppendLine();
+            sb.AppendLine("Aliases: /mrmr");
+            sb.AppendLine("Notes:");
+            sb.AppendLine("  - 'sizerange' enforces a minimum of 0.2");
+            sb.AppendLine("  - Use 'default' for eyeheight, collision, or sizerange to reset to the default value");
+            return sb.ToString();
         }
 
         private string DescribeRaces()
         {
             var sb = new StringBuilder();
+            sb.AppendLine("MyRaceMyRules: use '/myracemyrules help' for all commands.");
             sb.AppendLine($"Detected races: {DetectedRaces.Count}");
             foreach (var r in DetectedRaces)
-                sb.AppendLine($"  {r.FullCode} - Active overrides: {Config.Overrides.Count}");
-            foreach (var key in Config.Overrides.Keys)
-                sb.AppendLine($"  {key}");
+            {
+                int raceOverrideCount = Config.Overrides.TryGetValue(r.FullCode, out var entry)
+                    ? CountRaceOverrides(entry)
+                    : 0;
+                sb.AppendLine($"  {r.FullCode} - Active overrides: {raceOverrideCount}");
+            }
             sb.AppendLine("Use '/myracemyrules racecode' to list a race's skin parts and variant codes.");
+            sb.AppendLine("Use '/myracemyrules help' for a complete command list.");
             sb.AppendLine("Edit ModConfig/" + ServerConfigFile + " on the server and reload the world to change overrides.");
             return sb.ToString();
         }
@@ -238,6 +599,9 @@ namespace MyRaceMyRules
             sb.AppendLine($"=================================");
             sb.AppendLine($"AvailableClasses: {availableClassesText}");
             sb.AppendLine($"ExtraTraits: {extraTraitsText}");
+            sb.AppendLine($"SizeRange: {(race.SizeRange is null ? "(not specified)" : $"[{string.Join(", ", race.SizeRange)}]")}");
+            sb.AppendLine($"EyeHeight: {(race.EyeHeight.HasValue ? race.EyeHeight.Value.ToString() : "(not specified)")}");
+            sb.AppendLine($"CollisionBox: {(race.CollisionBox is null ? "(not specified)" : $"[{string.Join(", ", race.CollisionBox)}]")}");
             sb.AppendLine($"Skin parts ({race.SkinParts.Count}):");
             sb.AppendLine($"=================================");
             foreach ((string code, List<string> variants) in race.SkinParts)
@@ -263,6 +627,8 @@ namespace MyRaceMyRules
 
         private void LoadServerConfig(ICoreAPI api)
         {
+            _seededInitialRaces = IsServerConfigMissing(api);
+
             try
             {
                 Config = api.LoadModConfig<MyRaceMyRulesConfig>(ServerConfigFile) ?? new MyRaceMyRulesConfig();
@@ -272,9 +638,41 @@ namespace MyRaceMyRules
                 api.Logger.Error("[myracemyrules] Failed to load server config, using defaults: {0}", e);
                 Config = new MyRaceMyRulesConfig();
             }
+
+            SanitizeConfig(api, Config);
+
             // Write back so first run leaves a well-formed file for the operator to edit.
             try { api.StoreModConfig(Config, ServerConfigFile); }
             catch (Exception e) { api.Logger.Error("[myracemyrules] Failed to write server config: {0}", e); }
+        }
+
+        private static void SanitizeConfig(ICoreAPI api, MyRaceMyRulesConfig config)
+        {
+            foreach (var pair in config.Overrides)
+            {
+                var ov = pair.Value;
+                if (ov == null || ov.SizeRange == null || ov.SizeRange.Length != 2) continue;
+                if (ov.SizeRange[0] < MinSizeRangeMin)
+                {
+                    api.Logger.Error("[myracemyrules] Override for '{0}' had a sizeRange minimum of {1}; changing to {2} to enforce the minimum allowed value.",
+                        pair.Key, ov.SizeRange[0], MinSizeRangeMin);
+                    ov.SizeRange[0] = MinSizeRangeMin;
+                }
+            }
+        }
+
+        private static bool IsServerConfigMissing(ICoreAPI api)
+        {
+            try
+            {
+                string path = Path.Combine(api.GetOrCreateDataPath("ModConfig"), ServerConfigFile);
+                return !File.Exists(path);
+            }
+            catch (Exception e)
+            {
+                api.Logger.Warning("[myracemyrules] Could not determine whether the server config file existed yet: {0}", e.Message);
+                return false;
+            }
         }
 
         // ---------------------------------------------------------------------
@@ -404,7 +802,7 @@ namespace MyRaceMyRules
             // Do NOT write it back here; the client cache is written only when the server syncs.
         }
 
-        private void WriteClientCache(ICoreAPI api, string configJson)
+        private static void WriteClientCache(ICoreAPI api, string configJson)
         {
             string? cacheFile = ClientCacheFileFor(api);
             if (cacheFile == null)
@@ -445,8 +843,7 @@ namespace MyRaceMyRules
         /// <summary>Short, filename-safe digest of an untrusted string.</summary>
         private static string ShortHash(string value)
         {
-            using var sha = SHA256.Create();
-            byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(value));
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
             return Convert.ToHexString(hash, 0, 8); // 16 hex chars, plenty to separate servers
         }
 
@@ -501,8 +898,9 @@ namespace MyRaceMyRules
                 return false;
             }
 
-            if (IsPair(api, ov.SizeRange, "SizeRange", race.FullCode))
-                model["SizeRange"] = new JArray(ov.SizeRange![0], ov.SizeRange[1]);
+            var sizeRange = ClampMinSizeRange(api, ov.SizeRange, race.FullCode, "SizeRange");
+            if (IsPair(api, sizeRange, "SizeRange", race.FullCode))
+                model["SizeRange"] = new JArray(sizeRange![0], sizeRange[1]);
             if (ov.EyeHeight.HasValue) model["EyeHeight"] = ov.EyeHeight.Value;
             if (IsPair(api, ov.CollisionBox, "CollisionBox", race.FullCode))
                 model["CollisionBox"] = new JArray(ov.CollisionBox![0], ov.CollisionBox[1]);
@@ -531,8 +929,9 @@ namespace MyRaceMyRules
                 JObject? cfgRoot = LoadAssetJson(api, RaceDetector.SeraphModelConfigPath);
                 if (cfgRoot?[RaceDetector.SeraphModelConfigKey] is JObject cfg)
                 {
-                    if (IsPair(api, ov.SizeRange, "SizeRange", race.FullCode))
-                        cfg["SizeRange"] = new JArray(ov.SizeRange![0], ov.SizeRange[1]);
+                    var sizeRange = ClampMinSizeRange(api, ov.SizeRange, race.FullCode, "SizeRange");
+                    if (IsPair(api, sizeRange, "SizeRange", race.FullCode))
+                        cfg["SizeRange"] = new JArray(sizeRange![0], sizeRange[1]);
                     if (ov.Enabled.HasValue) cfg["Enabled"] = ov.Enabled.Value;
                     if (ov.AvailableClasses != null) cfg["AvailableClasses"] = new JArray(ov.AvailableClasses);
                     if (ov.ExtraTraits != null) cfg["ExtraTraits"] = new JArray(ov.ExtraTraits);
@@ -684,7 +1083,7 @@ namespace MyRaceMyRules
             // Ensure the target has a variants array to merge into.
             if (RaceDetector.GetPropCI(targetPart, "variants") is not JArray targetVariants)
             {
-                targetVariants = new JArray();
+                targetVariants = [];
                 targetPart["variants"] = targetVariants;
             }
 
@@ -747,6 +1146,18 @@ namespace MyRaceMyRules
         /// True if a [a, b] config field is present and well-formed. A field with the wrong
         /// number of entries is a config mistake, so say so rather than half-applying it.
         /// </summary>
+        private static float[]? ClampMinSizeRange(ICoreAPI api, float[]? value, string raceForLog, string fieldName)
+        {
+            if (value == null || value.Length != 2) return value;
+            if (value[0] < MinSizeRangeMin)
+            {
+                api.Logger.Error("[myracemyrules] ({0}) '{1}' minimum was {2}; clamping to {3}.",
+                    raceForLog, fieldName, value[0], MinSizeRangeMin);
+                return [MinSizeRangeMin, value[1]];
+            }
+            return value;
+        }
+
         private static bool IsPair(ICoreAPI api, float[]? value, string fieldName, string raceForLog)
         {
             if (value == null) return false;
@@ -795,8 +1206,7 @@ namespace MyRaceMyRules
         private static string HashConfig(MyRaceMyRulesConfig cfg)
         {
             string json = JsonConvert.SerializeObject(cfg, Formatting.None);
-            using var sha = SHA256.Create();
-            byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(json));
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
             return Convert.ToHexString(hash);
         }
 
