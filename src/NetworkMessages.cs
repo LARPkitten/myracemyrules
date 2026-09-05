@@ -10,8 +10,8 @@ namespace MyRaceMyRules
     ///     authoritative config JSON and a content hash.
     ///   - The client compares the hash to what it APPLIED this session (recorded when it
     ///     mutated assets at load). If they match, nothing to do. If they differ, the client
-    ///     overwrites its local server-cache file and asks the player to reconnect so the new
-    ///     values apply at the next load (PlayerModelLib reads model configs at load only).
+    ///     overwrites its local server-cache file and reapplies the changes so the client's 
+    ///     assets match the server's on first load.
     ///
     /// There is no client -> server message: clients never edit. The server config file is the
     /// sole source of truth; the client cache is a read-only mirror the server overwrites on

@@ -4,7 +4,7 @@
   "name": "My Race My Rules",
   "authors": [ "RandomKitten" ],
   "description": "Customize player races added by other mods (via PlayerModelLib). Server-authoritative on multiplayer.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "side": "Universal",
   "requiredOnClient": true,
   "requiredOnServer": true,

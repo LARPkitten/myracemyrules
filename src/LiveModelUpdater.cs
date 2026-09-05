@@ -415,7 +415,6 @@ namespace MyRaceMyRules
         }
 
         /// <summary>
-        /// SizeRange's exact runtime type is unverified (likely float[] or a vector type).
         /// Handle the plausible shapes; anything else logs and falls back to next-load apply.
         /// </summary>
         private static bool TrySetSizeRange(ICoreAPI api, object target, float min, float max, string codeForLog)
@@ -437,12 +436,6 @@ namespace MyRaceMyRules
                 if (memberType == typeof(float[]))
                 {
                     newValue = new[] { min, max };
-                }
-                else
-                {
-                    // Vector-ish type with a (float, float) constructor (e.g. OpenTK Vector2).
-                    ConstructorInfo? ctor = memberType.GetConstructor([typeof(float), typeof(float)]);
-                    if (ctor != null) newValue = ctor.Invoke([min, max]);
                 }
 
                 if (newValue == null)

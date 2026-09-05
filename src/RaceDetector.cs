@@ -42,7 +42,7 @@ namespace MyRaceMyRules
 
     /// <summary>
     /// Scans loaded mods for PlayerModelLib custom-model configs and extracts the races they
-    /// define. Custom models: assets/&lt;domain&gt;/config/customplayermodels/*.json, top-level
+    /// define. Custom models: assets/<domain>/config/customplayermodels/*.json, top-level
     /// keys = model codes. The default "seraph" model is special (per PlayerModelLib's
     /// LoadDefault): its model settings live in playermodellib:config/default-model-config.json
     /// under the key "seraph", while its skin parts (hairstyles, facial hair,

@@ -1013,25 +1013,32 @@ namespace MyRaceMyRules
             int applied = 0;
             foreach ((string fullCode, RaceOverrideEntry ov) in Config.Overrides)
             {
-                if (!byCode.TryGetValue(fullCode, out var race))
+                try
                 {
-                    api.Logger.Warning("[myracemyrules] Override targets '{0}' but no such race was detected; skipping.", fullCode);
-                    continue;
+                    if (!byCode.TryGetValue(fullCode, out var race))
+                    {
+                        api.Logger.Warning("[myracemyrules] Override targets '{0}' but no such race was detected; skipping.", fullCode);
+                        continue;
+                    }
+
+                    bool ok = race.IsSeraph
+                        ? ApplySeraphOverride(api, race, ov)
+                        : ApplyCustomModelOverride(api, race, ov);
+
+                    if (ok)
+                    {
+                        applied++;
+                        api.Logger.Notification("[myracemyrules] Applied override to '{0}'.", fullCode);
+                    }
+                }
+                catch (Exception e)
+                {
+                    api.Logger.Warning("[myracemyrules] Failed to apply override for '{0}': {1}", fullCode, e);
                 }
 
-                bool ok = race.IsSeraph
-                    ? ApplySeraphOverride(api, race, ov)
-                    : ApplyCustomModelOverride(api, race, ov);
-
-                if (ok)
-                {
-                    applied++;
-                    api.Logger.Notification("[myracemyrules] Applied override to '{0}'.", fullCode);
-                }
+                api.Logger.Notification("[myracemyrules] Applied {0}/{1} override(s) (side={2}).",
+                    applied, Config.Overrides.Count, api.Side);
             }
-
-            api.Logger.Notification("[myracemyrules] Applied {0}/{1} override(s) (side={2}).",
-                applied, Config.Overrides.Count, api.Side);
         }
 
         /// <summary>Custom model: everything lives in one customplayermodels asset.</summary>
@@ -1069,7 +1076,7 @@ namespace MyRaceMyRules
             if (ov.AvailableClasses != null) model["AvailableClasses"] = new JArray(ov.AvailableClasses);
             if (ov.ExtraTraits != null) model["ExtraTraits"] = new JArray(ov.ExtraTraits);
 
-            if ((ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0) &&
+            if ((ov.IncludeAllDefaultVariants || (ov.SkinnableParts?.Count ?? 0) > 0) &&
                 RaceDetector.GetPropCI(model, "SkinnableParts") is JArray parts)
                 ApplySkinnablePartOverrides(api, parts, ov, race.FullCode);
 

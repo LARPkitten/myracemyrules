@@ -11,7 +11,7 @@ namespace MyRaceMyRules
     {
         /// <summary>
         /// Per-race overrides, keyed by fully-qualified model code "domain:modelcode"
-        /// (e.g. "racialequality:orc"). The default race uses the plain key "seraph".
+        /// (e.g. "racialequality:ork"). The default race uses the plain key "seraph".
         /// Only races the operator has chosen to override need an entry; anything absent is
         /// left untouched. Run /myracemyrules in-game (as an admin) to list the exact race
         /// codes available.
