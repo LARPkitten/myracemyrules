@@ -437,6 +437,12 @@ namespace MyRaceMyRules
                 {
                     newValue = new[] { min, max };
                 }
+                else
+                {
+                    // Vector-ish type with a (float, float) constructor (e.g. OpenTK Vector2).
+                    ConstructorInfo? ctor = memberType.GetConstructor([typeof(float), typeof(float)]);
+                    if (ctor != null) newValue = ctor.Invoke([min, max]);
+                }
 
                 if (newValue == null)
                 {
