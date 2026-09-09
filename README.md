@@ -41,6 +41,7 @@ Everything lives in one file on the **server**, created for you on first run:
 | `CollisionBox` — `[width, height]` | The player's physical size |
 | `MinCollisionBox` / `MaxCollisionBox` — `[width, height]` | The minimum and maximum physical size |
 | `Enabled` | Whether the race appears in character creation |
+| `Name` | The race's display name in character creation (a literal name, not a translation key). Not supported for seraph. |
 | `AvailableClasses` | Which classes the race can pick (`[]` = all) |
 | `ExtraTraits` | Traits granted on top of the class |
 | `SkinnableParts` | Hairstyles, facial hair, colors, and any other appearance option — narrow the choices, hide a section, or put back options a race mod removed |
@@ -123,6 +124,7 @@ Every field a race block accepts:
 - `CollisionBox` — `[width, height]` (not configurable for seraph)
 - `MinCollisionBox` / `MaxCollisionBox` — `[width, height]`  (not configurable for seraph)
 - `Enabled` — `true` / `false`
+- `Name` — a display name string (not configurable for seraph; leave out to keep the race mod's name)
 - `AvailableClasses` — list of class codes (`[]` means all)
 - `ExtraTraits` — list of trait codes
 - `IncludeAllDefaultVariants` — `true` / `false`
@@ -148,6 +150,7 @@ when they connect — you don't need to tell them anything.
 | `/myracemyrules <racecode> enableall <part>` | `controlserver` | Restores all default variants for one appearance section |
 | `/myracemyrules all sizerange <min> <max>` | `controlserver` | Sets the size range for every detected race |
 | `/myracemyrules all enableall <part>` | `controlserver` | Restores all default variants for one section on every detected race |
+| `/myracemyrules traits` | `controlserver` | Writes every installed trait (code, name, description, and stat changes) to `Logs/myracemyrules-traits.txt` |
 
 The `/mrmr` command is an alias for `/myracemyrules`, so all of the same forms are available
 with the shorter name. Use `default` instead of a value to remove that override and restore the

@@ -8,7 +8,9 @@ using System.Security.Cryptography;
 using System.Text;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.Server;
+using Vintagestory.GameContent;
 
 namespace MyRaceMyRules
 {
@@ -255,6 +257,10 @@ namespace MyRaceMyRules
             if (string.Equals(first, "race", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(first, "races", StringComparison.OrdinalIgnoreCase))
                 return TextCommandResult.Success(DescribeRaces());
+
+            if (string.Equals(first, "traits", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(first, "dumptraits", StringComparison.OrdinalIgnoreCase))
+                return DumpTraitsToFile(api);
 
             if (args.ArgCount == 1)
                 return TextCommandResult.Success(DescribeSkinParts(first));
@@ -621,6 +627,7 @@ namespace MyRaceMyRules
             if (overrideEntry.CollisionBox != null) count++;
             if (overrideEntry.MinCollisionBox != null || overrideEntry.MaxCollisionBox != null) count++;
             if (overrideEntry.Enabled.HasValue) count++;
+            if (overrideEntry.Name != null) count++;
             if (overrideEntry.AvailableClasses != null) count++;
             if (overrideEntry.ExtraTraits != null) count++;
             if (overrideEntry.IncludeAllDefaultVariants) count++;
@@ -651,12 +658,14 @@ namespace MyRaceMyRules
             sb.AppendLine("  /myracemyrules mod:race enableall part");
             sb.AppendLine("  /myracemyrules all sizerange min max");
             sb.AppendLine("  /myracemyrules all enableall part");
+            sb.AppendLine("  /myracemyrules traits");
             sb.AppendLine();
             sb.AppendLine("Aliases: /mrmr");
             sb.AppendLine("Notes:");
             sb.AppendLine("  - 'sizerange' enforces a minimum of 0.2");
             sb.AppendLine("  - Use 'default' for eyeheight, collision, or sizerange to reset to the default value");
             sb.AppendLine("  - 'eyeheight' and 'collision' also scale by the race's SizeRange to produce a min/max range");
+            sb.AppendLine("  - 'traits' writes every installed trait (code, name, description, attribute changes) to a file in the game's Logs folder");
             return sb.ToString();
         }  
 
@@ -695,6 +704,7 @@ namespace MyRaceMyRules
 
             sb.AppendLine($"Race: {race.FullCode}");
             sb.AppendLine($"=================================");
+            sb.AppendLine($"Name: {(string.IsNullOrEmpty(race.Name) ? "(from language file)" : race.Name)}");
             sb.AppendLine($"AvailableClasses: {availableClassesText}");
             sb.AppendLine($"ExtraTraits: {extraTraitsText}");
             sb.AppendLine($"SizeRange: {(race.SizeRange is null ? "(not specified)" : $"[{string.Join(", ", race.SizeRange)}]")}");
@@ -718,6 +728,100 @@ namespace MyRaceMyRules
                     sb.AppendLine($"---------------------------------");
             }
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Write every loaded trait (vanilla + all mods, already merged by the game's
+        /// CharacterSystem) to a readable text file in the game's Logs folder: code, name,
+        /// description, and attribute changes.
+        /// </summary>
+        private TextCommandResult DumpTraitsToFile(ICoreServerAPI api)
+        {
+            CharacterSystem? characterSystem = api.ModLoader.GetModSystem<CharacterSystem>();
+            if (characterSystem == null)
+                return TextCommandResult.Error("Could not access the game's CharacterSystem; no traits to dump.");
+
+            Dictionary<string, Trait>? traitsByCode = characterSystem.TraitsByCode;
+            if (traitsByCode == null || traitsByCode.Count == 0)
+                return TextCommandResult.Error("No traits are loaded (CharacterSystem.TraitsByCode is empty).");
+
+            // Order by type (Positive, Mixed, Negative), then code.
+            var orderedTraits = traitsByCode.Values
+                .Where(t => t != null)
+                .OrderBy(t => (int)t.Type)
+                .ThenBy(t => t.Code, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("My Race My Rules - Trait dump");
+            sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"Total traits loaded (all mods + vanilla, merged): {orderedTraits.Count}");
+            sb.AppendLine("These codes are what you put in a race's \"ExtraTraits\" list in ModConfig/" + ServerConfigFile + ".");
+            sb.AppendLine(new string('=', 70));
+            sb.AppendLine();
+
+            foreach (Trait trait in orderedTraits)
+            {
+                string code = trait.Code ?? "(no code)";
+                string name = Lang.GetIfExists("trait-" + code) ?? "(no translated name)";
+                string? description = Lang.GetIfExists("traitdesc-" + code);
+
+                sb.AppendLine($"[{code}]");
+                sb.AppendLine($"  Name:        {name}");
+                sb.AppendLine($"  Type:        {trait.Type}");
+                sb.AppendLine($"  Description: {(string.IsNullOrWhiteSpace(description) ? "(none)" : description)}");
+
+                if (trait.Attributes != null && trait.Attributes.Count > 0)
+                {
+                    sb.AppendLine("  Changes:");
+                    foreach ((string attribute, double value) in trait.Attributes.OrderBy(a => a.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        // Raw stat change, plus the game's localized phrasing when one exists.
+                        string raw = $"{attribute}: {FormatTraitAttributeValue(value)}";
+                        string localizedKey = string.Format(
+                            System.Globalization.CultureInfo.InvariantCulture, "charattribute-{0}-{1}", attribute, value);
+                        string? localized = Lang.GetIfExists(localizedKey);
+
+                        string blendNote = "";
+                        if (trait.AttributeBlendTypes != null &&
+                            trait.AttributeBlendTypes.TryGetValue(attribute, out var blend))
+                            blendNote = $" (blend: {blend})";
+
+                        sb.AppendLine(string.IsNullOrWhiteSpace(localized)
+                            ? $"    - {raw}{blendNote}"
+                            : $"    - {raw}{blendNote}  ({localized})");
+                    }
+                }
+                else
+                {
+                    sb.AppendLine("  Changes:     (none)");
+                }
+
+                sb.AppendLine(new string('-', 70));
+            }
+
+            string dir = GamePaths.Logs;
+            string filePath = Path.Combine(dir, "myracemyrules-traits.txt");
+            try
+            {
+                GamePaths.EnsurePathExists(dir);
+                File.WriteAllText(filePath, sb.ToString());
+            }
+            catch (Exception e)
+            {
+                api.Logger.Error("[myracemyrules] Failed to write trait dump to '{0}': {1}", filePath, e);
+                return TextCommandResult.Error($"Failed to write trait dump: {e.Message}");
+            }
+
+            api.Logger.Notification("[myracemyrules] Wrote {0} trait(s) to '{1}'.", orderedTraits.Count, filePath);
+            return TextCommandResult.Success($"Wrote {orderedTraits.Count} trait(s) to Logs/myracemyrules-traits.txt");
+        }
+
+        /// <summary>Render a trait attribute value with an explicit sign; trailing zeros trimmed.</summary>
+        private static string FormatTraitAttributeValue(double value)
+        {
+            string magnitude = value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            return value >= 0 ? $"+{magnitude}" : magnitude; // negatives already carry '-'
         }
 
         private void OnPlayerJoin(IServerPlayer player)
@@ -1073,6 +1177,7 @@ namespace MyRaceMyRules
                     model["MaxCollisionBox"] = new JArray(ov.MaxCollisionBox![0], ov.MaxCollisionBox[1]);
             }
             if (ov.Enabled.HasValue) model["Enabled"] = ov.Enabled.Value;
+            if (ov.Name != null) model["Name"] = ov.Name;
             if (ov.AvailableClasses != null) model["AvailableClasses"] = new JArray(ov.AvailableClasses);
             if (ov.ExtraTraits != null) model["ExtraTraits"] = new JArray(ov.ExtraTraits);
 
@@ -1090,6 +1195,11 @@ namespace MyRaceMyRules
         private bool ApplySeraphOverride(ICoreAPI api, DetectedRace race, RaceOverrideEntry ov)
         {
             bool ok = true;
+
+            // Name is unsupported for seraph: its name comes from a game lang entry, not the
+            // model config, so there is nothing to override here.
+            if (ov.Name != null)
+                api.Logger.Warning("[myracemyrules] 'Name' override is not supported for seraph and will be ignored; seraph's name comes from a game language entry, not its model config.");
 
             // 1) Model settings (SizeRange, classes, traits, Enabled).
             if (ov.SizeRange != null || ov.MinEyeHeight.HasValue || ov.MaxEyeHeight.HasValue ||

@@ -33,6 +33,7 @@ namespace MyRaceMyRules
         public float[]? MinCollisionBox;     // [width, height]
         public float[]? MaxCollisionBox;     // [width, height]
         public bool? Enabled;
+        public string? Name;
         public List<string>? AvailableClasses;
         public List<string>? ExtraTraits;
 
@@ -134,6 +135,7 @@ namespace MyRaceMyRules
                         MinCollisionBox = ReadFloatArray(modelObj, "MinCollisionBox") ?? ReadFloatArray(modelObj, "CollisionBox"),
                         MaxCollisionBox = ReadFloatArray(modelObj, "MaxCollisionBox") ?? ReadFloatArray(modelObj, "CollisionBox"),
                         Enabled = ReadBool(modelObj, "Enabled"),
+                        Name = ReadString(modelObj, "Name"),
                         AvailableClasses = ReadStringList(modelObj, "AvailableClasses"),
                         ExtraTraits = ReadStringList(modelObj, "ExtraTraits"),
                         SkinParts = ReadSkinParts(GetPropCI(modelObj, "SkinnableParts") as JArray),
@@ -373,6 +375,13 @@ namespace MyRaceMyRules
         {
             var t = GetPropCI(o, key);
             if (t != null && t.Type == JTokenType.Boolean) return t.Value<bool>();
+            return null;
+        }
+
+        private static string? ReadString(JObject o, string key)
+        {
+            var t = GetPropCI(o, key);
+            if (t != null && t.Type == JTokenType.String) return t.Value<string>();
             return null;
         }
 

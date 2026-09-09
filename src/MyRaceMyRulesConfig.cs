@@ -43,6 +43,13 @@ namespace MyRaceMyRules
 
         // ----- Character-creation options -----
 
+        /// <summary>
+        /// Display name shown for this race in character creation. A literal string used
+        /// verbatim (not a translation key); null keeps the race mod's name. Ignored for seraph,
+        /// whose name comes from a game language entry rather than its model config.
+        /// </summary>
+        public string? Name;
+
         /// <summary>Whether this race appears in the character-creation dialog.</summary>
         public bool? Enabled;
 

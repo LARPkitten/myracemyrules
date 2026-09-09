@@ -66,6 +66,7 @@ namespace MyRaceMyRules
             foreach ((string fullCode, RaceOverrideEntry ov) in config.Overrides)
             {
                 bool anyDialogRelevant = ov.SizeRange != null || ov.Enabled.HasValue ||
+                    ov.Name != null ||
                     ov.AvailableClasses != null || ov.ExtraTraits != null ||
                     ov.IncludeAllDefaultVariants || ov.SkinnableParts.Count > 0;
                 if (!anyDialogRelevant) continue;
@@ -82,6 +83,10 @@ namespace MyRaceMyRules
 
                 if (ov.Enabled.HasValue)
                     allApplied &= TrySet(api, modelData, "Enabled", ov.Enabled.Value, fullCode);
+
+                // Name is unsupported for seraph (name comes from a lang entry); skip it live too.
+                if (ov.Name != null && !string.Equals(fullCode, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
+                    allApplied &= TrySet(api, modelData, "Name", ov.Name, fullCode);
 
                 if (ov.SizeRange is { Length: 2 })
                     allApplied &= TrySetSizeRange(api, modelData, ov.SizeRange[0], ov.SizeRange[1], fullCode);
