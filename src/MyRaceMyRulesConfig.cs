@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
 
 namespace MyRaceMyRules
 {
@@ -49,6 +51,18 @@ namespace MyRaceMyRules
         /// whose name comes from a game language entry rather than its model config.
         /// </summary>
         public string? Name;
+
+        /// <summary>
+        /// Description shown for this race in character creation (the blurb above the
+        /// class/trait list). A literal string used verbatim; null keeps the race mod's
+        /// description.
+        ///
+        /// Unlike <see cref="Name"/>, PlayerModelLib does NOT read the description from the
+        /// model config — it looks up the language entry "&lt;domain&gt;:modeldesc-&lt;code&gt;"
+        /// (for the default race, "game:modeldesc-seraph"). The mod applies this override by
+        /// patching that loaded language entry, so unlike Name it IS supported for seraph.
+        /// </summary>
+        public string? Description;
 
         /// <summary>Whether this race appears in the character-creation dialog.</summary>
         public bool? Enabled;
@@ -113,5 +127,32 @@ namespace MyRaceMyRules
 
         /// <summary>Remove these variant codes. Null = nothing removed.</summary>
         public List<string>? RemoveVariants;
+
+        /// <summary>
+        /// Add brand-new variants (options that are NOT on the default seraph and so cannot be
+        /// pulled in with <see cref="IncludeDefaultVariants"/> / <see cref="AllowedVariants"/>).
+        /// The classic use is adding voice types, whose variants carry a sound file.
+        ///
+        /// Two shapes are accepted, whichever is simplest for the case:
+        ///
+        /// 1) A MAP of "code" -&gt; value, for parts whose variants carry data:
+        ///      "voicetype": { "AddVariants": { "frog": "koboldrdx:sounds/voice/treefrog" } }
+        ///    The string value is used as the variant's primary asset, chosen by the part's
+        ///    type — "sound" for voice parts, "texture" for texture parts, the "shape" base for
+        ///    shape parts. For full control the value may instead be an object of raw variant
+        ///    fields, e.g. { "sound": "domain:sounds/voice/x" }; the code is filled in from the key.
+        ///
+        /// 2) An ARRAY of bare codes, for code-only parts (e.g. "voicepitch"):
+        ///      "voicepitch": { "AddVariants": ["verylow", "low"] }
+        ///    Adding a bare code to a part that needs data (like a hair color, which needs a
+        ///    texture) produces an option with nothing to show, so the mod logs a warning in
+        ///    that case.
+        ///
+        /// Added before <see cref="AllowedVariants"/>/<see cref="RemoveVariants"/> run, so those
+        /// filters still apply. Idempotent: re-adding an existing code updates it in place rather
+        /// than duplicating it. Held as a raw JSON token because it accepts either a map or an
+        /// array; it is interpreted when applied.
+        /// </summary>
+        public JToken? AddVariants;
     }
 }

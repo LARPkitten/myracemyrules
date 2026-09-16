@@ -23,6 +23,14 @@ namespace MyRaceMyRules
     /// values that are safer applied at next load via the normal asset path; they don't
     /// affect the creation dialog).
     ///
+    /// The eye-color/facial-expression auto-repair (FixEyeColor in MyRaceMyRulesModSystem) is
+    /// also deliberately NOT mirrored here. It works by giving a race the facial-expression
+    /// variants it needs so PlayerModelLib generates the model-prefixed iris overlay textures
+    /// (&lt;model&gt;-facialexpression-playermodellib-iris) during LoadParts. Those textures are
+    /// built once at load; adding a variant to an already-loaded model in memory would not
+    /// regenerate them, so the fix can only take effect through the asset path at load. It
+    /// converges on the next world load / reconnect, like EyeHeight/CollisionBox above.
+    ///
     /// Why reflection: the CustomModels dictionary and CustomModelData fields (Enabled,
     /// AvailableClasses, ExtraTraits, EyeHeight, CollisionBox) are visible in PlayerModelLib's
     /// source, but exact member names/types for all of them (notably SizeRange) could not be
@@ -164,6 +172,17 @@ namespace MyRaceMyRules
                 {
                     if (defaultParts == null) allApplied = false;
                     else allApplied &= MergeDefaultVariantsLive(api, skinParts, defaultParts, partCode, codeForLog);
+                }
+
+                // Added variants (e.g. voice types) carry data (sounds/textures/shapes) that
+                // PlayerModelLib resolves at load. Building those runtime objects live is not
+                // safe here, so this converges at next load — report "not fully applied" so the
+                // player is told to reconnect.
+                if (pov.AddVariants != null)
+                {
+                    api.Logger.Notification("[myracemyrules] Live apply: ({0}/{1}) AddVariants applies at next load; " +
+                        "reconnect to see the added option(s).", codeForLog, partCode);
+                    allApplied = false;
                 }
 
                 if (pov.Enabled == false)

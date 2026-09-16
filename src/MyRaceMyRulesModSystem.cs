@@ -228,7 +228,7 @@ namespace MyRaceMyRules
                 .WithArgs(sapi.ChatCommands.Parsers.OptionalWord("racecode"),
                     sapi.ChatCommands.Parsers.OptionalWord("command"),
                     sapi.ChatCommands.Parsers.OptionalWord("value1"),
-                    sapi.ChatCommands.Parsers.OptionalWord("value2"))
+                    sapi.ChatCommands.Parsers.OptionalAll("value2"))
                 .HandleWith(args => HandleRaceCommand(sapi, args));
 
             sapi.ChatCommands
@@ -238,7 +238,7 @@ namespace MyRaceMyRules
                 .WithArgs(sapi.ChatCommands.Parsers.OptionalWord("racecode"),
                     sapi.ChatCommands.Parsers.OptionalWord("command"),
                     sapi.ChatCommands.Parsers.OptionalWord("value1"),
-                    sapi.ChatCommands.Parsers.OptionalWord("value2"))
+                    sapi.ChatCommands.Parsers.OptionalAll("value2"))
                 .HandleWith(args => HandleRaceCommand(sapi, args));
         }
 
@@ -449,7 +449,55 @@ namespace MyRaceMyRules
             if (string.Equals(action, "enable", StringComparison.OrdinalIgnoreCase))
                 return TextCommandResult.Success(SetEnabled(api, first, true));
 
+            if (string.Equals(action, "description", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(action, "desc", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Error("'description' must target a single race, not 'all'.");
+                if (!GetTargetRaceCodes(first).Any())
+                    return TextCommandResult.Error($"Race '{first}' is not detected on this server. Use /myracemyrules to list detected races.");
+
+                string text = JoinValueArgs(args);
+                if (string.IsNullOrWhiteSpace(text))
+                    return TextCommandResult.Error("Usage: /myracemyrules mod:race description <text>  (or 'default' to reset)");
+
+                if (string.Equals(text.Trim(), "default", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(SetDefaultDescription(api, first));
+
+                return TextCommandResult.Success(SetDescription(api, first, text));
+            }
+
+            if (string.Equals(action, "name", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Error("'name' must target a single race, not 'all'.");
+                if (!GetTargetRaceCodes(first).Any())
+                    return TextCommandResult.Error($"Race '{first}' is not detected on this server. Use /myracemyrules to list detected races.");
+
+                string text = JoinValueArgs(args);
+                if (string.IsNullOrWhiteSpace(text))
+                    return TextCommandResult.Error("Usage: /myracemyrules mod:race name <text>  (or 'default' to reset)");
+
+                if (string.Equals(text.Trim(), "default", StringComparison.OrdinalIgnoreCase))
+                    return TextCommandResult.Success(SetDefaultName(api, first));
+
+                return TextCommandResult.Success(SetName(api, first, text));
+            }
+
             return TextCommandResult.Success(DescribeSkinParts(first));
+        }
+
+        /// <summary>
+        /// Reconstruct free-form text from the trailing command arguments. The command's
+        /// third parser (value1) is a single word; the fourth (value2) is an OptionalAll that
+        /// captures everything after it, so a phrase like "A tall people" arrives as
+        /// value1="A", value2="tall people". Joining them restores the original text.
+        /// </summary>
+        private static string JoinValueArgs(TextCommandCallingArgs args)
+        {
+            string word = args.ArgCount > 2 ? Convert.ToString(args[2]) ?? "" : "";
+            string rest = args.ArgCount > 3 ? Convert.ToString(args[3]) ?? "" : "";
+            return string.IsNullOrEmpty(rest) ? word.Trim() : $"{word} {rest}".Trim();
         }
 
         private string SetEnabled(ICoreServerAPI api, string raceCode, bool value)
@@ -459,6 +507,69 @@ namespace MyRaceMyRules
             SaveConfig(api);
             ReapplyOverrides(api);
             return $"Race '{raceCode}' is now {(value ? "enabled" : "disabled")}.";
+        }
+
+        private string SetDescription(ICoreServerAPI api, string raceCode, string description)
+        {
+            GetOrCreateOverride(raceCode).Description = description;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' description set to: {description}";
+        }
+
+        private string SetDefaultDescription(ICoreServerAPI api, string raceCode)
+        {
+            GetOrCreateOverride(raceCode).Description = null;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            RestoreOriginalLang(api, raceCode, forName: false);
+            return $"Race '{raceCode}' description reset to default.";
+        }
+
+        private string SetName(ICoreServerAPI api, string raceCode, string name)
+        {
+            GetOrCreateOverride(raceCode).Name = name;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            return $"Race '{raceCode}' name set to: {name}";
+        }
+
+        private string SetDefaultName(ICoreServerAPI api, string raceCode)
+        {
+            GetOrCreateOverride(raceCode).Name = null;
+            SaveConfig(api);
+            ReapplyOverrides(api);
+            RestoreOriginalLang(api, raceCode, forName: true);
+            return $"Race '{raceCode}' name reset to default.";
+        }
+
+        /// <summary>
+        /// After clearing a Name/Description override, put the originally-detected language
+        /// value back into the live lang cache so the reset shows immediately (the cache was
+        /// overwritten when the override was applied and would otherwise only revert on the
+        /// next world reload). If the race originally had no such entry, the injected key is
+        /// removed instead. For custom-race Name (a model-config field, not lang) there is
+        /// nothing to restore here.
+        /// </summary>
+        private void RestoreOriginalLang(ICoreServerAPI api, string raceCode, bool forName)
+        {
+            DetectedRace? race = DetectedRaces.FirstOrDefault(
+                r => string.Equals(r.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+            if (race == null) return;
+
+            if (forName)
+            {
+                // Only seraph uses a lang entry for its name; custom races use the model config,
+                // which reverts to the race mod's value on the next world reload.
+                if (!race.IsSeraph) return;
+                RestoreLangEntry(api, RaceDetector.ModelNameLangKey(race.Domain, race.ModelCode),
+                    race.OriginalNameLang, race.FullCode, "Name");
+            }
+            else
+            {
+                RestoreLangEntry(api, RaceDetector.ModelDescLangKey(race.Domain, race.ModelCode),
+                    race.Description, race.FullCode, "Description");
+            }
         }
 
         private string SetSizeRange(ICoreServerAPI api, string raceCode, float min, float max)
@@ -628,6 +739,7 @@ namespace MyRaceMyRules
             if (overrideEntry.MinCollisionBox != null || overrideEntry.MaxCollisionBox != null) count++;
             if (overrideEntry.Enabled.HasValue) count++;
             if (overrideEntry.Name != null) count++;
+            if (overrideEntry.Description != null) count++;
             if (overrideEntry.AvailableClasses != null) count++;
             if (overrideEntry.ExtraTraits != null) count++;
             if (overrideEntry.IncludeAllDefaultVariants) count++;
@@ -639,6 +751,7 @@ namespace MyRaceMyRules
                 if (partOverride.Enabled.HasValue) count++;
                 if (partOverride.AllowedVariants != null) count++;
                 if (partOverride.RemoveVariants != null) count++;
+                if (partOverride.AddVariants != null) count++;
             }
 
             return count;
@@ -652,6 +765,8 @@ namespace MyRaceMyRules
             sb.AppendLine("  /myracemyrules mod:race");
             sb.AppendLine("  /myracemyrules mod:race enable");
             sb.AppendLine("  /myracemyrules mod:race disable");
+            sb.AppendLine("  /myracemyrules mod:race name <text>");
+            sb.AppendLine("  /myracemyrules mod:race description <text>");
             sb.AppendLine("  /myracemyrules mod:race eyeheight baseValue");
             sb.AppendLine("  /myracemyrules mod:race collision width height");
             sb.AppendLine("  /myracemyrules mod:race sizerange min max");
@@ -664,6 +779,8 @@ namespace MyRaceMyRules
             sb.AppendLine("Notes:");
             sb.AppendLine("  - 'sizerange' enforces a minimum of 0.2");
             sb.AppendLine("  - Use 'default' for eyeheight, collision, or sizerange to reset to the default value");
+            sb.AppendLine("  - 'name' and 'description' take free-form text; use 'default' to restore the race mod's original");
+            sb.AppendLine("  - 'name' and 'description' work for seraph too (they come from the game's language file)");
             sb.AppendLine("  - 'eyeheight' and 'collision' also scale by the race's SizeRange to produce a min/max range");
             sb.AppendLine("  - 'traits' writes every installed trait (code, name, description, attribute changes) to a file in the game's Logs folder");
             return sb.ToString();
@@ -704,7 +821,13 @@ namespace MyRaceMyRules
 
             sb.AppendLine($"Race: {race.FullCode}");
             sb.AppendLine($"=================================");
-            sb.AppendLine($"Name: {(string.IsNullOrEmpty(race.Name) ? "(from language file)" : race.Name)}");
+            Config.Overrides.TryGetValue(race.FullCode, out var ovForDisplay);
+            string nameText = ovForDisplay?.Name
+                ?? (string.IsNullOrEmpty(race.Name) ? "(from language file)" : race.Name);
+            string descriptionText = ovForDisplay?.Description
+                ?? (string.IsNullOrEmpty(race.Description) ? "(from language file)" : race.Description);
+            sb.AppendLine($"Name: {nameText}");
+            sb.AppendLine($"Description: {descriptionText}");
             sb.AppendLine($"AvailableClasses: {availableClassesText}");
             sb.AppendLine($"ExtraTraits: {extraTraitsText}");
             sb.AppendLine($"SizeRange: {(race.SizeRange is null ? "(not specified)" : $"[{string.Join(", ", race.SizeRange)}]")}");
@@ -725,9 +848,32 @@ namespace MyRaceMyRules
                 sb.AppendLine($"{code} ({variants.Count} variant(s)):");
                 if (variants.Count > 0)
                     sb.AppendLine($"    {string.Join(", ", variants)}");
-                    sb.AppendLine($"---------------------------------");
+
+                // Show variants this config ADDS on top of the detected list (they apply at the
+                // next load, so they may not yet be in the detected variants above).
+                if (ovForDisplay != null &&
+                    ovForDisplay.SkinnableParts.TryGetValue(code, out var pov) && pov?.AddVariants != null)
+                {
+                    List<string> addedCodes = ExtractAddVariantCodes(pov.AddVariants);
+                    if (addedCodes.Count > 0)
+                        sb.AppendLine($"    + added by config: {string.Join(", ", addedCodes)}");
+                }
+
+                sb.AppendLine($"---------------------------------");
             }
             return sb.ToString();
+        }
+
+        /// <summary>List the variant codes an AddVariants token declares (map keys or array items).</summary>
+        private static List<string> ExtractAddVariantCodes(JToken addVariants)
+        {
+            var codes = new List<string>();
+            if (addVariants.Type == JTokenType.Object)
+                codes.AddRange(((JObject)addVariants).Properties().Select(p => p.Name));
+            else if (addVariants.Type == JTokenType.Array)
+                codes.AddRange(((JArray)addVariants).Select(t => (t as JValue)?.Value?.ToString() ?? "")
+                    .Where(s => s.Length > 0));
+            return codes;
         }
 
         /// <summary>
@@ -957,6 +1103,11 @@ namespace MyRaceMyRules
 
             if (serverConfig == null) return;
 
+            // Name/Description live in the language cache, not PlayerModelLib's model data, so
+            // apply them directly here (LiveModelUpdater only handles model-data fields). This
+            // is independent of whether the model-data live apply below succeeds.
+            ApplyLangOverridesFromConfig(_capi, serverConfig);
+
             if (TryLiveApplyAndTrack(serverConfig, packet.ConfigHash))
                 return;
 
@@ -1105,43 +1256,70 @@ namespace MyRaceMyRules
 
         private void ApplyOverrides(ICoreAPI api)
         {
-            if (Config.Overrides.Count == 0)
-            {
-                api.Logger.Notification("[myracemyrules] No overrides configured.");
-                return;
-            }
-
             var byCode = new Dictionary<string, DetectedRace>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in DetectedRaces) byCode[r.FullCode] = r;
 
-            int applied = 0;
-            foreach ((string fullCode, RaceOverrideEntry ov) in Config.Overrides)
+            // Races whose asset we already touched via the overrides loop below (FixEyeColor
+            // runs inside those paths), so the auto-repair pass can skip re-loading them.
+            var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (Config.Overrides.Count == 0)
             {
-                try
+                api.Logger.Notification("[myracemyrules] No overrides configured.");
+            }
+            else
+            {
+                int applied = 0;
+                foreach ((string fullCode, RaceOverrideEntry ov) in Config.Overrides)
                 {
-                    if (!byCode.TryGetValue(fullCode, out var race))
+                    try
                     {
-                        api.Logger.Warning("[myracemyrules] Override targets '{0}' but no such race was detected; skipping.", fullCode);
-                        continue;
+                        if (!byCode.TryGetValue(fullCode, out var race))
+                        {
+                            api.Logger.Warning("[myracemyrules] Override targets '{0}' but no such race was detected; skipping.", fullCode);
+                            continue;
+                        }
+
+                        bool ok = race.IsSeraph
+                            ? ApplySeraphOverride(api, race, ov)
+                            : ApplyCustomModelOverride(api, race, ov);
+
+                        processed.Add(fullCode);
+
+                        if (ok)
+                        {
+                            applied++;
+                            api.Logger.Notification("[myracemyrules] Applied override to '{0}'.", fullCode);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        api.Logger.Warning("[myracemyrules] Failed to apply override for '{0}': {1}", fullCode, e);
                     }
 
-                    bool ok = race.IsSeraph
-                        ? ApplySeraphOverride(api, race, ov)
-                        : ApplyCustomModelOverride(api, race, ov);
-
-                    if (ok)
-                    {
-                        applied++;
-                        api.Logger.Notification("[myracemyrules] Applied override to '{0}'.", fullCode);
-                    }
+                    api.Logger.Notification("[myracemyrules] Applied {0}/{1} override(s) (side={2}).",
+                        applied, Config.Overrides.Count, api.Side);
                 }
+            }
+
+            // Auto-repair pass: every custom race that wasn't touched above still needs its
+            // eye-color/facial-expression wiring checked (FixEyeColor). Seraph is always correct
+            // (PlayerModelLib sets it up), so it is skipped.
+            foreach (DetectedRace race in DetectedRaces)
+            {
+                if (race.IsSeraph || processed.Contains(race.FullCode)) continue;
+
+                // Cheap pre-check from detection data: a race with neither part offers no facial
+                // expressions, so there is nothing to repair — skip without loading its asset.
+                if (!race.SkinParts.ContainsKey(FacialExpressionPart) &&
+                    !race.SkinParts.ContainsKey(EyeColorPart))
+                    continue;
+
+                try { FixEyeColorForRaceAsset(api, race); }
                 catch (Exception e)
                 {
-                    api.Logger.Warning("[myracemyrules] Failed to apply override for '{0}': {1}", fullCode, e);
+                    api.Logger.Warning("[myracemyrules] FixEyeColor pass failed for '{0}': {1}", race.FullCode, e);
                 }
-
-                api.Logger.Notification("[myracemyrules] Applied {0}/{1} override(s) (side={2}).",
-                    applied, Config.Overrides.Count, api.Side);
             }
         }
 
@@ -1181,9 +1359,19 @@ namespace MyRaceMyRules
             if (ov.AvailableClasses != null) model["AvailableClasses"] = new JArray(ov.AvailableClasses);
             if (ov.ExtraTraits != null) model["ExtraTraits"] = new JArray(ov.ExtraTraits);
 
+            // Description is not a model-config field — it is the language entry
+            // "<domain>:modeldesc-<code>" that PlayerModelLib reads. Patch the loaded lang cache.
+            if (ov.Description != null)
+                ApplyDescriptionOverride(api, race, ov.Description);
+
             if ((ov.IncludeAllDefaultVariants || (ov.SkinnableParts?.Count ?? 0) > 0) &&
                 RaceDetector.GetPropCI(model, "SkinnableParts") is JArray parts)
                 ApplySkinnablePartOverrides(api, parts, ov, race.FullCode);
+
+            // Auto-repair: make sure a race with facial expressions can tint its eye color.
+            // Runs for every race regardless of configured overrides (see FixEyeColor).
+            if (RaceDetector.GetPropCI(model, "SkinnableParts") is JArray skinParts)
+                FixEyeColor(api, skinParts, race.FullCode);
 
             return StoreAssetJson(api, race.AssetPath, root);
         }
@@ -1196,10 +1384,13 @@ namespace MyRaceMyRules
         {
             bool ok = true;
 
-            // Name is unsupported for seraph: its name comes from a game lang entry, not the
-            // model config, so there is nothing to override here.
+            // Name and Description for seraph both come from language entries
+            // ("game:playermodel-seraph" and "game:modeldesc-seraph"), not the model config,
+            // so we patch the loaded lang cache rather than writing model-config fields.
             if (ov.Name != null)
-                api.Logger.Warning("[myracemyrules] 'Name' override is not supported for seraph and will be ignored; seraph's name comes from a game language entry, not its model config.");
+                ApplyNameOverride(api, race, ov.Name);
+            if (ov.Description != null)
+                ApplyDescriptionOverride(api, race, ov.Description);
 
             // 1) Model settings (SizeRange, classes, traits, Enabled).
             if (ov.SizeRange != null || ov.MinEyeHeight.HasValue || ov.MaxEyeHeight.HasValue ||
@@ -1261,6 +1452,131 @@ namespace MyRaceMyRules
         }
 
         /// <summary>
+        /// Apply the language-based overrides (Description for all races; Name for seraph) from
+        /// a config to the live lang cache. Used on first-join sync so the character-creation
+        /// dialog shows them without waiting for a reload. Custom-race Name is a model-config
+        /// field handled elsewhere, so it is skipped here.
+        /// </summary>
+        private void ApplyLangOverridesFromConfig(ICoreAPI api, MyRaceMyRulesConfig config)
+        {
+            foreach ((string fullCode, RaceOverrideEntry ov) in config.Overrides)
+            {
+                if (ov == null) continue;
+                if (ov.Description == null && ov.Name == null) continue;
+
+                DetectedRace? race = DetectedRaces.FirstOrDefault(
+                    r => string.Equals(r.FullCode, fullCode, StringComparison.OrdinalIgnoreCase));
+
+                // Fall back to splitting the code if the race was not detected on this side.
+                string domain, modelCode;
+                if (race != null) { domain = race.Domain; modelCode = race.ModelCode; }
+                else
+                {
+                    int colon = fullCode.IndexOf(':');
+                    if (colon < 0) { domain = ""; modelCode = fullCode; }
+                    else { domain = fullCode[..colon]; modelCode = fullCode[(colon + 1)..]; }
+                }
+
+                bool isSeraph = race?.IsSeraph
+                    ?? string.Equals(fullCode, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase);
+
+                if (ov.Description != null)
+                    ApplyLangOverride(api, RaceDetector.ModelDescLangKey(domain, modelCode), ov.Description, fullCode, "Description");
+
+                if (ov.Name != null && isSeraph)
+                    ApplyLangOverride(api, RaceDetector.ModelNameLangKey(domain, modelCode), ov.Name, fullCode, "Name");
+            }
+        }
+
+        /// <summary>
+        /// Apply a race's Description override. PlayerModelLib shows the description from the
+        /// language entry "&lt;domain&gt;:modeldesc-&lt;code&gt;" (for seraph, "game:modeldesc-seraph"),
+        /// NOT from the model config, so this patches the loaded language cache.
+        /// </summary>
+        private void ApplyDescriptionOverride(ICoreAPI api, DetectedRace race, string description)
+        {
+            string key = RaceDetector.ModelDescLangKey(race.Domain, race.ModelCode);
+            ApplyLangOverride(api, key, description, race.FullCode, "Description");
+        }
+
+        /// <summary>
+        /// Apply a race's Name override via the language cache. Used for seraph (and any race
+        /// whose name comes from "&lt;domain&gt;:playermodel-&lt;code&gt;" rather than a model-config
+        /// "Name" field). Custom models set "Name" in their config, which PlayerModelLib prefers.
+        /// </summary>
+        private void ApplyNameOverride(ICoreAPI api, DetectedRace race, string name)
+        {
+            string key = RaceDetector.ModelNameLangKey(race.Domain, race.ModelCode);
+            ApplyLangOverride(api, key, name, race.FullCode, "Name");
+        }
+
+        /// <summary>
+        /// Override a single language entry in the loaded translation cache.
+        ///
+        /// Language files are loaded (and merged into <see cref="Lang"/>) before mods get a
+        /// chance to run in AssetsLoaded, and they cannot be patched through the asset system
+        /// the way model configs can. So instead of rewriting a lang asset's bytes (which would
+        /// have no effect), we set the entry directly in every loaded locale's live entry cache.
+        /// Keys are stored fully-qualified as "domain:key"; our keys already carry a domain.
+        /// </summary>
+        private void ApplyLangOverride(ICoreAPI api, string langKey, string value, string raceForLog, string what)
+        {
+            int patched = 0;
+            foreach (ITranslationService service in Lang.AvailableLanguages.Values)
+            {
+                try
+                {
+                    IDictionary<string, string> entries = service.GetAllEntries();
+                    entries[langKey] = value;
+                    patched++;
+                }
+                catch (Exception e)
+                {
+                    api.Logger.Warning("[myracemyrules] ({0}) Failed to set {1} lang entry '{2}': {3}",
+                        raceForLog, what, langKey, e.Message);
+                }
+            }
+
+            if (patched > 0)
+                api.Logger.Notification("[myracemyrules] ({0}) Set {1} via lang entry '{2}' in {3} locale(s).",
+                    raceForLog, what, langKey, patched);
+            else
+                api.Logger.Warning("[myracemyrules] ({0}) {1} override could not be applied; no loaded locales.",
+                    raceForLog, what);
+        }
+
+        /// <summary>
+        /// Restore a language entry to its original value in the live cache. If the race had no
+        /// original value for this key, the key we injected is removed so the lookup once again
+        /// reports "no translation" (matching the pre-override state).
+        /// </summary>
+        private void RestoreLangEntry(ICoreAPI api, string langKey, string? originalValue, string raceForLog, string what)
+        {
+            if (originalValue != null)
+            {
+                ApplyLangOverride(api, langKey, originalValue, raceForLog, what);
+                return;
+            }
+
+            int removed = 0;
+            foreach (ITranslationService service in Lang.AvailableLanguages.Values)
+            {
+                try
+                {
+                    if (service.GetAllEntries().Remove(langKey)) removed++;
+                }
+                catch (Exception e)
+                {
+                    api.Logger.Warning("[myracemyrules] ({0}) Failed to clear {1} lang entry '{2}': {3}",
+                        raceForLog, what, langKey, e.Message);
+                }
+            }
+
+            api.Logger.Notification("[myracemyrules] ({0}) Cleared {1} lang entry '{2}' in {3} locale(s).",
+                raceForLog, what, langKey, removed);
+        }
+
+        /// <summary>
         /// Apply skinnable-part overrides to a skinnableParts JSON array (shared by custom
         /// models and the seraph entity).
         ///
@@ -1311,6 +1627,11 @@ namespace MyRaceMyRules
 
                 if (pov.Enabled.HasValue)
                     part["enabled"] = pov.Enabled.Value;
+
+                // Add brand-new variants (e.g. voice types) BEFORE filtering, so AllowedVariants/
+                // RemoveVariants still apply to the merged set.
+                if (pov.AddVariants != null)
+                    AddVariants(api, part, partCode, pov.AddVariants, raceForLog);
 
                 if ((pov.AllowedVariants != null || pov.RemoveVariants != null) &&
                     RaceDetector.GetPropCI(part, "variants") is JArray variants)
@@ -1383,6 +1704,311 @@ namespace MyRaceMyRules
 
             api.Logger.Notification("[myracemyrules] ({0}/{1}) Merged {2} default variant(s); part now has {3}.",
                 raceForLog, partCode, added, targetVariants.Count);
+        }
+
+        /// <summary>
+        /// Add brand-new variants to a part from a config <c>AddVariants</c> token. Accepts a map
+        /// ("code" -&gt; string primary asset, or object of raw fields) or an array of bare codes.
+        /// Upserts by code (idempotent), leaving existing variants (and their order) otherwise
+        /// intact. Runs before variant filtering so Allowed/Remove still apply.
+        /// </summary>
+        private void AddVariants(ICoreAPI api, JObject part, string partCode, JToken addVariants, string raceForLog)
+        {
+            // The part's declared type decides what a bare string value means.
+            string partType = (RaceDetector.GetPropCI(part, "type") as JValue)?.Value?.ToString()?.ToLowerInvariant() ?? "";
+            string? primaryField = PrimaryVariantField(partType);
+
+            if (RaceDetector.GetPropCI(part, "variants") is not JArray variants)
+            {
+                variants = [];
+                part["variants"] = variants;
+            }
+
+            // Index existing variants by code for idempotent upserts.
+            var byCode = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+            foreach (JObject v in variants.OfType<JObject>())
+            {
+                string? c = (RaceDetector.GetPropCI(v, "code") as JValue)?.Value?.ToString();
+                if (!string.IsNullOrEmpty(c)) byCode[c!] = v;
+            }
+
+            int added = 0, updated = 0;
+
+            void Upsert(string code, JObject built)
+            {
+                if (byCode.TryGetValue(code, out JObject? existing) && existing != null)
+                {
+                    // Merge built fields onto the existing variant (update in place, no duplicate).
+                    existing.Merge(built, new JsonMergeSettings { MergeArrayHandling = MergeArrayHandling.Replace });
+                    updated++;
+                }
+                else
+                {
+                    variants.Add(built);
+                    byCode[code] = built;
+                    added++;
+                }
+            }
+
+            switch (addVariants.Type)
+            {
+                case JTokenType.Object:
+                    foreach (JProperty entry in ((JObject)addVariants).Properties())
+                    {
+                        string code = entry.Name;
+                        if (string.IsNullOrWhiteSpace(code)) continue;
+                        JObject? built = BuildVariant(api, code, entry.Value, partType, primaryField, partCode, raceForLog);
+                        if (built != null) { Upsert(code, built); MaybeAutoName(api, partCode, code); }
+                    }
+                    break;
+
+                case JTokenType.Array:
+                    foreach (JToken item in (JArray)addVariants)
+                    {
+                        // Bare code entries: fine for code-only parts (e.g. voicepitch), broken
+                        // for parts that need data — warn so an invisible option isn't a mystery.
+                        string code = (item as JValue)?.Value?.ToString() ?? "";
+                        if (string.IsNullOrWhiteSpace(code)) continue;
+                        if (primaryField != null)
+                            api.Logger.Warning("[myracemyrules] ({0}/{1}) AddVariants: '{2}' was added as a bare code, but " +
+                                "this part needs a '{3}'. The option will appear with nothing to show. Use a map like " +
+                                "\"{2}\": \"<{3}>\" instead.", raceForLog, partCode, code, primaryField);
+                        Upsert(code, new JObject { ["code"] = code });
+                        MaybeAutoName(api, partCode, code);
+                    }
+                    break;
+
+                default:
+                    api.Logger.Warning("[myracemyrules] ({0}/{1}) AddVariants must be a map or an array; ignoring.",
+                        raceForLog, partCode);
+                    return;
+            }
+
+            api.Logger.Notification("[myracemyrules] ({0}/{1}) AddVariants: added {2}, updated {3}; part now has {4} variant(s).",
+                raceForLog, partCode, added, updated, variants.Count);
+        }
+
+        /// <summary>
+        /// Build one variant JObject from an AddVariants value. A string value becomes
+        /// { code, &lt;primaryField&gt;: value } (e.g. a voice's "sound"); an object value is
+        /// used as the variant's fields with the code injected. Returns null if the value is
+        /// unusable.
+        /// </summary>
+        private JObject? BuildVariant(ICoreAPI api, string code, JToken value, string partType,
+            string? primaryField, string partCode, string raceForLog)
+        {
+            if (value.Type == JTokenType.String)
+            {
+                string asset = value.Value<string>() ?? "";
+                if (primaryField == null)
+                {
+                    // Code-only part given a value; keep the code, ignore the extra data.
+                    return new JObject { ["code"] = code };
+                }
+                // Shapes take an object ({ "base": path }); voice/texture take a plain string.
+                if (string.Equals(partType, "shape", StringComparison.OrdinalIgnoreCase))
+                    return new JObject { ["code"] = code, ["shape"] = new JObject { ["base"] = asset } };
+                return new JObject { ["code"] = code, [primaryField] = asset };
+            }
+
+            if (value.Type == JTokenType.Object)
+            {
+                var built = (JObject)value.DeepClone();
+                built["code"] = code; // always trust the map key for the code
+                if (string.Equals(partType, "voice", StringComparison.OrdinalIgnoreCase) &&
+                    RaceDetector.GetPropCI(built, "sound") == null)
+                    api.Logger.Warning("[myracemyrules] ({0}/{1}) AddVariants: voice variant '{2}' has no 'sound'; " +
+                        "it will be silent.", raceForLog, partCode, code);
+                return built;
+            }
+
+            api.Logger.Warning("[myracemyrules] ({0}/{1}) AddVariants entry '{2}' must be a string or an object; skipping.",
+                raceForLog, partCode, code);
+            return null;
+        }
+
+        /// <summary>
+        /// The variant field a bare string value fills, based on the part's type: voice parts
+        /// carry a "sound", texture parts a "texture", shape parts a "shape". Null for a
+        /// code-only part (a bare code is complete on its own).
+        /// </summary>
+        private static string? PrimaryVariantField(string partType) => partType switch
+        {
+            "voice" => "sound",
+            "texture" => "texture",
+            "shape" => "shape",
+            _ => null,
+        };
+
+        /// <summary>
+        /// Give a newly added variant a friendly menu label if it has none yet: set the
+        /// "skinpart-&lt;part&gt;-&lt;code&gt;" language entry to a title-cased version of the code.
+        /// Never overwrites an existing translation (so mod- or game-provided names win).
+        /// </summary>
+        private void MaybeAutoName(ICoreAPI api, string partCode, string variantCode)
+        {
+            string key = $"skinpart-{partCode}-{variantCode}";
+            if (Lang.HasTranslation(key)) return;
+
+            string label = TitleCaseCode(variantCode);
+            foreach (ITranslationService service in Lang.AvailableLanguages.Values)
+            {
+                try { service.GetAllEntries()[$"game:{key}"] = label; }
+                catch { /* best-effort friendly name; ignore */ }
+            }
+        }
+
+        private static string TitleCaseCode(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return code;
+            string spaced = code.Replace('-', ' ').Replace('_', ' ').Trim();
+            if (spaced.Length == 0) return code;
+            return char.ToUpperInvariant(spaced[0]) + spaced[1..];
+        }
+
+        // Skin-part codes involved in the eye-color / facial-expression relationship.
+        private const string FacialExpressionPart = "facialexpression";
+        private const string EyeColorPart = "eyecolor";
+
+        /// <summary>
+        /// Load a custom race's asset and run <see cref="FixEyeColor"/> on its SkinnableParts.
+        /// Used by the auto-repair pass for races that have no configured override (and so are
+        /// not visited by the normal apply loop). Races processed by the apply loop already had
+        /// FixEyeColor run inline, so this is not called for them.
+        /// </summary>
+        private void FixEyeColorForRaceAsset(ICoreAPI api, DetectedRace race)
+        {
+            JObject? root = LoadAssetJson(api, race.AssetPath);
+            if (root == null) return;
+            if (root[race.ModelCode] is not JObject model) return;
+            if (RaceDetector.GetPropCI(model, "SkinnableParts") is not JArray parts) return;
+
+            if (FixEyeColor(api, parts, race.FullCode))
+                StoreAssetJson(api, race.AssetPath, root);
+        }
+
+        /// <summary>
+        /// Auto-repair for eye color on race-added facial expressions.
+        ///
+        /// PlayerModelLib renders the "eyecolor" texture part as an overlay whose target texture
+        /// code is model-prefixed: "&lt;model&gt;-facialexpression-playermodellib-iris". That
+        /// texture only exists if the race's OWN "facialexpression" part contains the selected
+        /// expression variant (PML prefixes each expression shape's "playermodellib-iris" texture
+        /// with the model code when it loads that model's part). A race that offers facial
+        /// expressions without a matching, fully-populated "facialexpression" part — and an
+        /// "eyecolor" part that targets it — ends up with an overlay that lands nowhere, so the
+        /// eyes never take on the chosen color.
+        ///
+        /// This makes such a race self-consistent, using the default race (seraph) as the
+        /// canonical source:
+        ///   1. If the race has neither a "facialexpression" nor an "eyecolor" part, it does not
+        ///      offer expressions at all — leave it untouched.
+        ///   2. Otherwise ensure a "facialexpression" part exists (clone seraph's if missing) and
+        ///      merge in every seraph expression variant it lacks, so PML generates the
+        ///      race-prefixed iris textures for each expression.
+        ///   3. Ensure an "eyecolor" part exists (clone seraph's if missing) whose
+        ///      "targetskinparts" includes "facialexpression".
+        ///
+        /// Idempotent: re-running makes no further changes once a race is consistent. Returns
+        /// true if it changed anything (so the caller knows whether to persist the asset).
+        /// </summary>
+        private bool FixEyeColor(ICoreAPI api, JArray parts, string raceForLog)
+        {
+            JObject? facial = FindPart(parts, FacialExpressionPart);
+            JObject? eyecolor = FindPart(parts, EyeColorPart);
+
+            // A race with neither part does not offer facial expressions; nothing to repair.
+            if (facial == null && eyecolor == null) return false;
+
+            // Respect an intentionally disabled facial-expression part: with no selectable
+            // expressions there is no eye-color-on-expression to fix, and we must not re-enable
+            // something the race turned off.
+            if (facial != null && RaceDetector.GetPropCI(facial, "enabled") is JValue en &&
+                en.Type == JTokenType.Boolean && en.Value<bool>() == false)
+            {
+                api.Logger.Notification("[myracemyrules] ({0}) FixEyeColor: '{1}' is disabled; leaving eye color alone.",
+                    raceForLog, FacialExpressionPart);
+                return false;
+            }
+
+            if (_defaultSkinnableParts == null)
+            {
+                api.Logger.Warning("[myracemyrules] ({0}) FixEyeColor skipped: the default (seraph) skin-part " +
+                    "snapshot is unavailable.", raceForLog);
+                return false;
+            }
+            JArray defaults = _defaultSkinnableParts;
+
+            bool changed = false;
+
+            // (1) Ensure a facialexpression part exists, cloned from seraph if the race lacks it.
+            if (facial == null)
+            {
+                JObject? defaultFacial = FindPart(defaults, FacialExpressionPart);
+                if (defaultFacial == null)
+                {
+                    api.Logger.Warning("[myracemyrules] ({0}) FixEyeColor: default race has no '{1}' part; cannot repair.",
+                        raceForLog, FacialExpressionPart);
+                    return changed;
+                }
+                parts.Add(defaultFacial.DeepClone());
+                changed = true;
+                api.Logger.Notification("[myracemyrules] ({0}) FixEyeColor: added missing '{1}' part from the default race.",
+                    raceForLog, FacialExpressionPart);
+            }
+
+            // (2) Merge in every seraph expression variant the race is missing so PML generates
+            // the race-prefixed iris textures for each expression.
+            int before = CountVariants(FindPart(parts, FacialExpressionPart));
+            MergeDefaultVariants(api, parts, FacialExpressionPart, raceForLog);
+            if (CountVariants(FindPart(parts, FacialExpressionPart)) != before) changed = true;
+
+            // (3) Ensure an eyecolor part exists and targets facialexpression.
+            eyecolor = FindPart(parts, EyeColorPart);
+            if (eyecolor == null)
+            {
+                JObject? defaultEye = FindPart(defaults, EyeColorPart);
+                if (defaultEye == null)
+                {
+                    api.Logger.Warning("[myracemyrules] ({0}) FixEyeColor: default race has no '{1}' part; cannot add it.",
+                        raceForLog, EyeColorPart);
+                    return changed;
+                }
+                eyecolor = (JObject)defaultEye.DeepClone();
+                parts.Add(eyecolor);
+                changed = true;
+                api.Logger.Notification("[myracemyrules] ({0}) FixEyeColor: added missing '{1}' part from the default race.",
+                    raceForLog, EyeColorPart);
+            }
+
+            if (EnsureTargetsFacialExpression(eyecolor)) changed = true;
+
+            return changed;
+        }
+
+        private static int CountVariants(JObject? part) =>
+            part != null && RaceDetector.GetPropCI(part, "variants") is JArray v ? v.Count : 0;
+
+        /// <summary>
+        /// Ensure a part's "targetskinparts" list contains "facialexpression" (case-insensitive).
+        /// Returns true if the list was modified. Preserves the existing property name casing.
+        /// </summary>
+        private static bool EnsureTargetsFacialExpression(JObject eyecolor)
+        {
+            JProperty? targetsProp = eyecolor.Properties().FirstOrDefault(
+                p => string.Equals(p.Name, "targetskinparts", StringComparison.OrdinalIgnoreCase));
+
+            if (targetsProp?.Value is JArray targets)
+            {
+                bool has = targets.OfType<JValue>().Any(v =>
+                    string.Equals(v.Value?.ToString(), FacialExpressionPart, StringComparison.OrdinalIgnoreCase));
+                if (has) return false;
+                targets.Add(FacialExpressionPart);
+                return true;
+            }
+
+            eyecolor["targetskinparts"] = new JArray(FacialExpressionPart);
+            return true;
         }
 
         /// <summary>

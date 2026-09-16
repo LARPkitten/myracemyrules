@@ -41,10 +41,11 @@ Everything lives in one file on the **server**, created for you on first run:
 | `CollisionBox` — `[width, height]` | The player's physical size |
 | `MinCollisionBox` / `MaxCollisionBox` — `[width, height]` | The minimum and maximum physical size |
 | `Enabled` | Whether the race appears in character creation |
-| `Name` | The race's display name in character creation (a literal name, not a translation key). Not supported for seraph. |
+| `Name` | The race's display name in character creation (a literal name, not a translation key). Works for seraph too. |
+| `Description` | The race's description in character creation — the blurb shown above the class/trait list (a literal string, not a translation key). Works for seraph too. |
 | `AvailableClasses` | Which classes the race can pick (`[]` = all) |
 | `ExtraTraits` | Traits granted on top of the class |
-| `SkinnableParts` | Hairstyles, facial hair, colors, and any other appearance option — narrow the choices, hide a section, or put back options a race mod removed |
+| `SkinnableParts` | Hairstyles, facial hair, colors, voice types, and any other appearance option — narrow the choices, hide a section, put back options a race mod removed, or add brand-new ones |
 
 ### Example
 
@@ -55,6 +56,8 @@ Orks who can be tiny or towering with all haircolors allowed, no dwarves, and a 
   "Overrides": {
     "racialequality:ork": {
       "SizeRange": [0.5, 2.0],
+      "Name": "Ork",
+      "Description": "Towering brutes, as strong as they are stubborn.",
       "SkinnableParts":{
         "haircolor": { "IncludeDefaultVariants": true }
       }
@@ -63,6 +66,7 @@ Orks who can be tiny or towering with all haircolors allowed, no dwarves, and a 
       "Enabled": false
     },
     "seraph": {
+      "Description": "The ordinary folk of this world.",
       "SkinnableParts": {
         "hairbase": { "AllowedVariants": ["bald", "short", "medium"] },
         "beard": { "Enabled": false },
@@ -114,7 +118,43 @@ Race-wide flags run first, so "give me everything, then take one thing away" wor
 | `IncludeDefaultVariants` | Add the game's full list of options for this section |
 | `AllowedVariants` | Keep only the options you list |
 | `RemoveVariants` | Drop the options you list |
+| `AddVariants` | Add brand-new options that aren't part of the game's default set (see below) |
 | `Enabled` | `false` hides the section completely |
+
+### Adding new options (`AddVariants`)
+
+`IncludeDefaultVariants` and `AllowedVariants` bring back options that already exist on the
+default seraph. To add something **new** — most commonly a new **voice type**, which needs its
+own sound file — use `AddVariants`.
+
+The simplest form is one line per option. What you put on the right depends on the section:
+a **voice** needs a sound file, a **texture** section (like a skin or color) needs a texture, a
+**shape** section needs a shape.
+
+```json
+"racialequality:ork": {
+  "SkinnableParts": {
+    "voicetype": {
+      "AddVariants": {
+        "ork-deep":  "racialequality:sounds/voice/ork-deep",
+        "ork-gruff": "racialequality:sounds/voice/ork-gruff"
+      }
+    }
+  }
+}
+```
+
+- The **name on the left** is the option's code; the **value on the right** is its file. Sounds
+  can be your mod's own (`yourmod:sounds/voice/...`) or one of the game's (`sounds/voice/...`).
+- For sections whose options are just a code with no file (like `voicepitch`), you can pass a
+  simple list instead: `"voicepitch": { "AddVariants": ["verylow", "low"] }`.
+- Need more control? Give an option a full definition instead of a single value:
+  `"AddVariants": { "ork-deep": { "sound": "racialequality:sounds/voice/ork-deep" } }`.
+- New options get a tidy menu label automatically (the code, capitalized) unless the mod or game
+  already provides a translated name — existing names are never overwritten.
+- New options are added before `AllowedVariants`/`RemoveVariants`, so those still apply. Re-adding
+  the same code updates it rather than creating a duplicate. Added options appear after the next
+  world load / reconnect.
 
 Every field a race block accepts:
 
@@ -124,7 +164,8 @@ Every field a race block accepts:
 - `CollisionBox` — `[width, height]` (not configurable for seraph)
 - `MinCollisionBox` / `MaxCollisionBox` — `[width, height]`  (not configurable for seraph)
 - `Enabled` — `true` / `false`
-- `Name` — a display name string (not configurable for seraph; leave out to keep the race mod's name)
+- `Name` — a display name string (works for seraph too; leave out to keep the race mod's name)
+- `Description` — a description string shown in character creation (works for seraph too; leave out to keep the race mod's description)
 - `AvailableClasses` — list of class codes (`[]` means all)
 - `ExtraTraits` — list of trait codes
 - `IncludeAllDefaultVariants` — `true` / `false`
@@ -144,6 +185,8 @@ when they connect — you don't need to tell them anything.
 | `/myracemyrules <racecode>` | `controlserver` | Lists that race's appearance sections and their option codes |
 | `/myracemyrules <racecode> enable` | `controlserver` | Enables the race in character creation |
 | `/myracemyrules <racecode> disable` | `controlserver` | Disables the race in character creation |
+| `/myracemyrules <racecode> name <text>` | `controlserver` | Sets the race's display name (use `default` to restore the race mod's name) |
+| `/myracemyrules <racecode> description <text>` | `controlserver` | Sets the race's character-creation description (use `default` to restore the race mod's description) |
 | `/myracemyrules <racecode> eyeheight <baseValue>` | `controlserver` | Sets the base eye height |
 | `/myracemyrules <racecode> collision <width> <height>` | `controlserver` | Sets the base collision box |
 | `/myracemyrules <racecode> sizerange <min> <max>` | `controlserver` | Sets the character size range; the minimum cannot be below `0.2` |
@@ -160,8 +203,21 @@ race's original setting.
 
 - Only someone who can edit files on the server can change these settings — players have no
   way to alter or work around them.
+- `Name` and `Description` are the race's character-creation display name and blurb. Behind the
+  scenes these come from the game's language files (`playermodel-<code>` and `modeldesc-<code>`),
+  which is why they work for **seraph** as well as modded races. You give a literal string, not a
+  translation key. `default` restores the race mod's original text.
 - `EyeHeight` and `CollisionBox` settle in on a player's next connect rather than immediately.
   Neither affects character creation, so it isn't something players run into.
+- **Eye color on facial expressions is fixed automatically.** Player Model Lib tints eyes with a
+  color overlay that only lands if a race's *own* facial-expression options carry the matching
+  eye textures. Races that add or expose facial expressions without wiring this up would show no
+  eye-color change on those faces. This mod detects any race offering facial expressions and,
+  using the default seraph as the reference, makes sure the race has the full set of expression
+  options and an eye-color section pointed at them — so eye color works on every expression. It's
+  automatic, needs no configuration, and does nothing to races that don't offer expressions or
+  that intentionally disable them. Like other appearance changes, it takes effect on the next
+  world load / reconnect.
 - `eyeheight` and `collision` console commands set the base values, then multiply those values 
   by the race SizeRange to derive the Min and Max values. These Min and Max values can be 
   manually altered in the JSON config file if needed but will be reset if the console command

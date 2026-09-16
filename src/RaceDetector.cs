@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 
 namespace MyRaceMyRules
 {
@@ -34,6 +35,8 @@ namespace MyRaceMyRules
         public float[]? MaxCollisionBox;     // [width, height]
         public bool? Enabled;
         public string? Name;
+        public string? Description;       // original value of lang entry <domain>:modeldesc-<code>
+        public string? OriginalNameLang;  // original value of lang entry <domain>:playermodel-<code>
         public List<string>? AvailableClasses;
         public List<string>? ExtraTraits;
 
@@ -136,6 +139,7 @@ namespace MyRaceMyRules
                         MaxCollisionBox = ReadFloatArray(modelObj, "MaxCollisionBox") ?? ReadFloatArray(modelObj, "CollisionBox"),
                         Enabled = ReadBool(modelObj, "Enabled"),
                         Name = ReadString(modelObj, "Name"),
+                        Description = GetCurrentDescription(domain, prop.Name),
                         AvailableClasses = ReadStringList(modelObj, "AvailableClasses"),
                         ExtraTraits = ReadStringList(modelObj, "ExtraTraits"),
                         SkinParts = ReadSkinParts(GetPropCI(modelObj, "SkinnableParts") as JArray),
@@ -165,6 +169,12 @@ namespace MyRaceMyRules
                 IsSeraph = true,
                 SkinPartsAssetPath = PlayerEntityPath,
             };
+
+            // Description comes from a language entry, not the model config
+            // ("game:modeldesc-seraph" for the default race). The name likewise comes from
+            // "game:playermodel-seraph"; capture the originals so a reset can restore them.
+            race.Description = GetCurrentDescription(race.Domain, race.ModelCode);
+            race.OriginalNameLang = GetCurrentName(race.Domain, race.ModelCode);
 
             // Model settings (SizeRange, classes, ...) from default-model-config.json.
             try
@@ -307,6 +317,41 @@ namespace MyRaceMyRules
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
+        }
+
+        /// <summary>
+        /// The language key PlayerModelLib uses for a race's character-creation description,
+        /// mirroring CharacterSelectionDialog.CreateModelDescription: "&lt;domain&gt;:modeldesc-&lt;code&gt;".
+        /// A model code without a domain (the default "seraph") resolves to the "game" domain.
+        /// </summary>
+        public static string ModelDescLangKey(string domain, string modelCode)
+        {
+            string effectiveDomain = string.IsNullOrEmpty(domain) ? "game" : domain;
+            return $"{effectiveDomain}:modeldesc-{modelCode}";
+        }
+
+        /// <summary>
+        /// The language key PlayerModelLib uses for a race's display name when the model config
+        /// has no explicit "Name", mirroring CharacterSelectionDialog.GetCustomModelLangEntry:
+        /// "&lt;domain&gt;:playermodel-&lt;code&gt;". A model code without a domain (the default
+        /// "seraph") resolves to the "game" domain.
+        /// </summary>
+        public static string ModelNameLangKey(string domain, string modelCode)
+        {
+            string effectiveDomain = string.IsNullOrEmpty(domain) ? "game" : domain;
+            return $"{effectiveDomain}:playermodel-{modelCode}";
+        }
+
+        /// <summary>Current description as resolved from the loaded language files, or null if none.</summary>
+        public static string? GetCurrentDescription(string domain, string modelCode)
+        {
+            return Lang.GetIfExists(ModelDescLangKey(domain, modelCode));
+        }
+
+        /// <summary>Current name as resolved from the loaded language files, or null if none.</summary>
+        public static string? GetCurrentName(string domain, string modelCode)
+        {
+            return Lang.GetIfExists(ModelNameLangKey(domain, modelCode));
         }
 
         /// <summary>Case-insensitive property lookup (asset JSON casing varies: vanilla lowercase, PML PascalCase).</summary>
