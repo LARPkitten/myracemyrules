@@ -26,7 +26,7 @@ namespace MyRaceMyRules
     /// The eye-color/facial-expression auto-repair (FixEyeColor in MyRaceMyRulesModSystem) is
     /// also deliberately NOT mirrored here. It works by giving a race the facial-expression
     /// variants it needs so PlayerModelLib generates the model-prefixed iris overlay textures
-    /// (&lt;model&gt;-facialexpression-playermodellib-iris) during LoadParts. Those textures are
+    /// (<model>-facialexpression-playermodellib-iris) during LoadParts. Those textures are
     /// built once at load; adding a variant to an already-loaded model in memory would not
     /// regenerate them, so the fix can only take effect through the asset path at load. It
     /// converges on the next world load / reconnect, like EyeHeight/CollisionBox above.

@@ -1259,10 +1259,6 @@ namespace MyRaceMyRules
             var byCode = new Dictionary<string, DetectedRace>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in DetectedRaces) byCode[r.FullCode] = r;
 
-            // Races whose asset we already touched via the overrides loop below (FixEyeColor
-            // runs inside those paths), so the auto-repair pass can skip re-loading them.
-            var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
             if (Config.Overrides.Count == 0)
             {
                 api.Logger.Notification("[myracemyrules] No overrides configured.");
@@ -1284,8 +1280,6 @@ namespace MyRaceMyRules
                             ? ApplySeraphOverride(api, race, ov)
                             : ApplyCustomModelOverride(api, race, ov);
 
-                        processed.Add(fullCode);
-
                         if (ok)
                         {
                             applied++;
@@ -1299,26 +1293,6 @@ namespace MyRaceMyRules
 
                     api.Logger.Notification("[myracemyrules] Applied {0}/{1} override(s) (side={2}).",
                         applied, Config.Overrides.Count, api.Side);
-                }
-            }
-
-            // Auto-repair pass: every custom race that wasn't touched above still needs its
-            // eye-color/facial-expression wiring checked (FixEyeColor). Seraph is always correct
-            // (PlayerModelLib sets it up), so it is skipped.
-            foreach (DetectedRace race in DetectedRaces)
-            {
-                if (race.IsSeraph || processed.Contains(race.FullCode)) continue;
-
-                // Cheap pre-check from detection data: a race with neither part offers no facial
-                // expressions, so there is nothing to repair — skip without loading its asset.
-                if (!race.SkinParts.ContainsKey(FacialExpressionPart) &&
-                    !race.SkinParts.ContainsKey(EyeColorPart))
-                    continue;
-
-                try { FixEyeColorForRaceAsset(api, race); }
-                catch (Exception e)
-                {
-                    api.Logger.Warning("[myracemyrules] FixEyeColor pass failed for '{0}': {1}", race.FullCode, e);
                 }
             }
         }
@@ -1368,9 +1342,13 @@ namespace MyRaceMyRules
                 RaceDetector.GetPropCI(model, "SkinnableParts") is JArray parts)
                 ApplySkinnablePartOverrides(api, parts, ov, race.FullCode);
 
-            // Auto-repair: make sure a race with facial expressions can tint its eye color.
-            // Runs for every race regardless of configured overrides (see FixEyeColor).
-            if (RaceDetector.GetPropCI(model, "SkinnableParts") is JArray skinParts)
+            // Auto-repair: a race whose config adds facial expression variants (per-part
+            // AddVariants/IncludeDefaultVariants, or the race-wide IncludeAllDefaultVariants)
+            // needs its eye-color wiring checked (see FixEyeColor). Races that don't add any
+            // are left alone. Harmless to call speculatively on IncludeAllDefaultVariants even
+            // if the race has no facialexpression part: FixEyeColor no-ops in that case.
+            if ((ov.IncludeAllDefaultVariants || AddsFacialExpressionVariants(ov)) &&
+                RaceDetector.GetPropCI(model, "SkinnableParts") is JArray skinParts)
                 FixEyeColor(api, skinParts, race.FullCode);
 
             return StoreAssetJson(api, race.AssetPath, root);
@@ -1871,27 +1849,27 @@ namespace MyRaceMyRules
         private const string EyeColorPart = "eyecolor";
 
         /// <summary>
-        /// Load a custom race's asset and run <see cref="FixEyeColor"/> on its SkinnableParts.
-        /// Used by the auto-repair pass for races that have no configured override (and so are
-        /// not visited by the normal apply loop). Races processed by the apply loop already had
-        /// FixEyeColor run inline, so this is not called for them.
+        /// True if the override brings new variants into the race's "facialexpression" part:
+        /// either <c>AddVariants</c> (a non-empty map or array) or <c>IncludeDefaultVariants</c>.
         /// </summary>
-        private void FixEyeColorForRaceAsset(ICoreAPI api, DetectedRace race)
+        private static bool AddsFacialExpressionVariants(RaceOverrideEntry ov)
         {
-            JObject? root = LoadAssetJson(api, race.AssetPath);
-            if (root == null) return;
-            if (root[race.ModelCode] is not JObject model) return;
-            if (RaceDetector.GetPropCI(model, "SkinnableParts") is not JArray parts) return;
+            if (ov.SkinnableParts == null) return false;
 
-            if (FixEyeColor(api, parts, race.FullCode))
-                StoreAssetJson(api, race.AssetPath, root);
+            foreach ((string partCode, SkinnablePartOverride pov) in ov.SkinnableParts)
+            {
+                if (!string.Equals(partCode, FacialExpressionPart, StringComparison.OrdinalIgnoreCase)) continue;
+                if (pov == null) continue;
+                if (pov.IncludeDefaultVariants || pov.AddVariants is { HasValues: true }) return true;
+            }
+            return false;
         }
 
         /// <summary>
-        /// Auto-repair for eye color on race-added facial expressions.
+        /// Auto-repair for eye color on race-added facial expressions. - WIP, not yet working
         ///
         /// PlayerModelLib renders the "eyecolor" texture part as an overlay whose target texture
-        /// code is model-prefixed: "&lt;model&gt;-facialexpression-playermodellib-iris". That
+        /// code is model-prefixed: "<model>-facialexpression-playermodellib-iris". That
         /// texture only exists if the race's OWN "facialexpression" part contains the selected
         /// expression variant (PML prefixes each expression shape's "playermodellib-iris" texture
         /// with the model code when it loads that model's part). A race that offers facial

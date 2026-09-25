@@ -118,18 +118,17 @@ Race-wide flags run first, so "give me everything, then take one thing away" wor
 | `IncludeDefaultVariants` | Add the game's full list of options for this section |
 | `AllowedVariants` | Keep only the options you list |
 | `RemoveVariants` | Drop the options you list |
-| `AddVariants` | Add brand-new options that aren't part of the game's default set (see below) |
+| `AddVariants` | Add the options you list |
 | `Enabled` | `false` hides the section completely |
 
-### Adding new options (`AddVariants`)
+### Adding multipart options
 
-`IncludeDefaultVariants` and `AllowedVariants` bring back options that already exist on the
-default seraph. To add something **new** — most commonly a new **voice type**, which needs its
+To add an option that requires more than just a name  — e.g. **voice type**, which needs its
 own sound file — use `AddVariants`.
 
 The simplest form is one line per option. What you put on the right depends on the section:
-a **voice** needs a sound file, a **texture** section (like a skin or color) needs a texture, a
-**shape** section needs a shape.
+a **voice** needs a sound file, a **texture** (like a skin or color) needs a texture, a
+**shape** needs a shape.
 
 ```json
 "racialequality:ork": {
@@ -164,8 +163,8 @@ Every field a race block accepts:
 - `CollisionBox` — `[width, height]` (not configurable for seraph)
 - `MinCollisionBox` / `MaxCollisionBox` — `[width, height]`  (not configurable for seraph)
 - `Enabled` — `true` / `false`
-- `Name` — a display name string (works for seraph too; leave out to keep the race mod's name)
-- `Description` — a description string shown in character creation (works for seraph too; leave out to keep the race mod's description)
+- `Name` — a display name string (leave out to keep the race mod's name)
+- `Description` — a description string shown in character creation (leave out to keep the race mod's description)
 - `AvailableClasses` — list of class codes (`[]` means all)
 - `ExtraTraits` — list of trait codes
 - `IncludeAllDefaultVariants` — `true` / `false`

@@ -47,8 +47,7 @@ namespace MyRaceMyRules
 
         /// <summary>
         /// Display name shown for this race in character creation. A literal string used
-        /// verbatim (not a translation key); null keeps the race mod's name. Ignored for seraph,
-        /// whose name comes from a game language entry rather than its model config.
+        /// verbatim (not a translation key); null keeps the race mod's name. 
         /// </summary>
         public string? Name;
 
@@ -57,10 +56,10 @@ namespace MyRaceMyRules
         /// class/trait list). A literal string used verbatim; null keeps the race mod's
         /// description.
         ///
-        /// Unlike <see cref="Name"/>, PlayerModelLib does NOT read the description from the
-        /// model config — it looks up the language entry "&lt;domain&gt;:modeldesc-&lt;code&gt;"
-        /// (for the default race, "game:modeldesc-seraph"). The mod applies this override by
-        /// patching that loaded language entry, so unlike Name it IS supported for seraph.
+        /// PlayerModelLib does NOT read the description from themodel config — it looks up 
+        /// the language entry "<domain>:modeldesc-<code>" (for the default race, 
+        /// "game:modeldesc-seraph"). The mod applies this override by patching that loaded 
+        /// language entry.
         /// </summary>
         public string? Description;
 
@@ -131,11 +130,11 @@ namespace MyRaceMyRules
         /// <summary>
         /// Add brand-new variants (options that are NOT on the default seraph and so cannot be
         /// pulled in with <see cref="IncludeDefaultVariants"/> / <see cref="AllowedVariants"/>).
-        /// The classic use is adding voice types, whose variants carry a sound file.
+        /// An example use is adding voice types, whose variants carry a sound file.
         ///
         /// Two shapes are accepted, whichever is simplest for the case:
         ///
-        /// 1) A MAP of "code" -&gt; value, for parts whose variants carry data:
+        /// 1) A MAP of "code" > value, for parts whose variants carry data:
         ///      "voicetype": { "AddVariants": { "frog": "koboldrdx:sounds/voice/treefrog" } }
         ///    The string value is used as the variant's primary asset, chosen by the part's
         ///    type — "sound" for voice parts, "texture" for texture parts, the "shape" base for
