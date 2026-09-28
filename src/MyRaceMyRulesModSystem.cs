@@ -244,28 +244,29 @@ namespace MyRaceMyRules
 
         private TextCommandResult HandleRaceCommand(ICoreServerAPI api, TextCommandCallingArgs args)
         {
-            if (args == null || args.ArgCount == 0 || args[0] == null)
+            if (args == null || string.IsNullOrWhiteSpace(GetArg(args, 0)))
                 return TextCommandResult.Success(DescribeRaces());
 
-            string? first = Convert.ToString(args[0]);
+            string? first = GetArg(args, 0);
             if (string.IsNullOrWhiteSpace(first))
                 return TextCommandResult.Success(DescribeRaces());
 
             if (string.Equals(first, "help", StringComparison.OrdinalIgnoreCase))
                 return TextCommandResult.Success(DescribeHelp());
 
-            if (string.Equals(first, "race", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(first, "races", StringComparison.OrdinalIgnoreCase))
+            // Only treat "race"/"races" as the list keyword when no sub-command follows it.
+            // (ArgCount is unreliable with optional parsers, so read the slots via GetArg.)
+            string? secondArg = GetArg(args, 1);
+            if ((string.Equals(first, "race", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(first, "races", StringComparison.OrdinalIgnoreCase)) &&
+                string.IsNullOrWhiteSpace(secondArg))
                 return TextCommandResult.Success(DescribeRaces());
 
             if (string.Equals(first, "traits", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(first, "dumptraits", StringComparison.OrdinalIgnoreCase))
                 return DumpTraitsToFile(api);
 
-            if (args.ArgCount == 1)
-                return TextCommandResult.Success(DescribeSkinParts(first));
-
-            string? action = args.ArgCount > 1 ? Convert.ToString(args[1]) : null;
+            string? action = GetArg(args, 1);
             if (string.IsNullOrWhiteSpace(action))
                 return TextCommandResult.Success(DescribeSkinParts(first));
 
@@ -274,8 +275,8 @@ namespace MyRaceMyRules
 
             if (string.Equals(action, "enableall", StringComparison.OrdinalIgnoreCase))
             {
-                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race or all, then enableall part");
-                string partCode = Convert.ToString(args[2]) ?? "";
+                if (string.IsNullOrWhiteSpace(GetArg(args, 2))) return TextCommandResult.Error("Usage: /myracemyrules mod:race or all, then enableall part");
+                string partCode = GetArg(args, 2) ?? "";
 
                 if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                 {
@@ -297,7 +298,7 @@ namespace MyRaceMyRules
                 if (!GetTargetRaceCodes(first).Any())
                     return TextCommandResult.Error($"Race '{first}' is not detected on this server. Use /myracemyrules to list detected races.");
 
-                if (args.ArgCount >= 3 && string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(GetArg(args, 2), "default", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                     {
@@ -312,9 +313,9 @@ namespace MyRaceMyRules
                     return TextCommandResult.Success(SetDefaultSizeRange(api, first));
                 }
 
-                if (args.ArgCount < 4) return TextCommandResult.Error("Usage: /myracemyrules mod:race or all, then sizerange min max");
-                if (!float.TryParse(Convert.ToString(args[2]), out float min) ||
-                    !float.TryParse(Convert.ToString(args[3]), out float max))
+                if (string.IsNullOrWhiteSpace(GetArg(args, 3))) return TextCommandResult.Error("Usage: /myracemyrules mod:race or all, then sizerange min max");
+                if (!TryParseInvariant(GetArg(args, 2), out float min) ||
+                    !TryParseInvariant(GetArg(args, 3), out float max))
                     return TextCommandResult.Error("Size range requires two numeric values.");
 
                 if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
@@ -352,8 +353,8 @@ namespace MyRaceMyRules
                 if (string.Equals(first, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
                     return TextCommandResult.Error("EyeHeight cannot be edited for seraph.");
 
-                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race eyeheight baseValue");
-                if (string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrWhiteSpace(GetArg(args, 2))) return TextCommandResult.Error("Usage: /myracemyrules mod:race eyeheight baseValue");
+                if (string.Equals(GetArg(args, 2), "default", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                     {
@@ -367,7 +368,7 @@ namespace MyRaceMyRules
 
                     return TextCommandResult.Success(SetDefaultEyeHeight(api, first));
                 }
-                if (!float.TryParse(Convert.ToString(args[2]), out float baseEyeHeight))
+                if (!TryParseInvariant(GetArg(args, 2), out float baseEyeHeight))
                     return TextCommandResult.Error("Eye height must be numeric.");
 
                 if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
@@ -399,8 +400,8 @@ namespace MyRaceMyRules
                 if (string.Equals(first, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase))
                     return TextCommandResult.Error("CollisionBox cannot be edited for seraph.");
 
-                if (args.ArgCount < 3) return TextCommandResult.Error("Usage: /myracemyrules mod:race collision width height");
-                if (string.Equals(Convert.ToString(args[2]), "default", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrWhiteSpace(GetArg(args, 2))) return TextCommandResult.Error("Usage: /myracemyrules mod:race collision width height");
+                if (string.Equals(GetArg(args, 2), "default", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
                     {
@@ -414,9 +415,9 @@ namespace MyRaceMyRules
 
                     return TextCommandResult.Success(SetDefaultCollisionBox(api, first));
                 }
-                if (args.ArgCount < 4 ||
-                    !float.TryParse(Convert.ToString(args[2]), out float baseWidth) ||
-                    !float.TryParse(Convert.ToString(args[3]), out float baseHeight))
+                if (string.IsNullOrWhiteSpace(GetArg(args, 3)) ||
+                    !TryParseInvariant(GetArg(args, 2), out float baseWidth) ||
+                    !TryParseInvariant(GetArg(args, 3), out float baseHeight))
                     return TextCommandResult.Error("Collision box requires two numeric base values: width height.");
 
                 if (string.Equals(first, "all", StringComparison.OrdinalIgnoreCase))
@@ -487,6 +488,24 @@ namespace MyRaceMyRules
             return TextCommandResult.Success(DescribeSkinParts(first));
         }
 
+        /// <summary>Reads a command argument slot; null if missing, empty, or out of range.</summary>
+        private static string? GetArg(TextCommandCallingArgs args, int index)
+        {
+            try
+            {
+                object? v = args[index];
+                string? str = v == null ? null : Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture);
+                return string.IsNullOrWhiteSpace(str) ? null : str;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static bool TryParseInvariant(string? text, out float value) =>
+            float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
+
         /// <summary>
         /// Reconstruct free-form text from the trailing command arguments. The command's
         /// third parser (value1) is a single word; the fourth (value2) is an OptionalAll that
@@ -495,8 +514,8 @@ namespace MyRaceMyRules
         /// </summary>
         private static string JoinValueArgs(TextCommandCallingArgs args)
         {
-            string word = args.ArgCount > 2 ? Convert.ToString(args[2]) ?? "" : "";
-            string rest = args.ArgCount > 3 ? Convert.ToString(args[3]) ?? "" : "";
+            string word = GetArg(args, 2) ?? "";
+            string rest = GetArg(args, 3) ?? "";
             return string.IsNullOrEmpty(rest) ? word.Trim() : $"{word} {rest}".Trim();
         }
 
