@@ -208,15 +208,24 @@ race's original setting.
   translation key. `default` restores the race mod's original text.
 - `EyeHeight` and `CollisionBox` settle in on a player's next connect rather than immediately.
   Neither affects character creation, so it isn't something players run into.
-- **Eye color on facial expressions is fixed automatically.** Player Model Lib tints eyes with a
-  color overlay that only lands if a race's *own* facial-expression options carry the matching
-  eye textures. Races that add or expose facial expressions without wiring this up would show no
-  eye-color change on those faces. This mod detects any race offering facial expressions and,
-  using the default seraph as the reference, makes sure the race has the full set of expression
-  options and an eye-color section pointed at them — so eye color works on every expression. It's
-  automatic, needs no configuration, and does nothing to races that don't offer expressions or
-  that intentionally disable them. Like other appearance changes, it takes effect on the next
-  world load / reconnect.
+- **The camera ducks under low ceilings automatically.** If a race's eye height is taller than
+  the space the player is in — an ork with its eyes at 2.2 blocks in a 2-block tunnel, or a
+  kobold with its eyes at 1.1 blocks in a 1-block gap — the camera is lowered to just under the
+  ceiling while they are in the low space and returns to normal as soon as they are out. This is
+  purely visual and works for every race, tall or short; it never changes the collision box, so
+  whether a character *fits* through a space is still decided by the race's `CollisionBox` and
+  the game's own sneaking. It is not applied while flying, noclipping, climbing, swimming,
+  sitting, mounted, dead, or in spectator mode, where the game positions the camera its own way.
+- **Eye color on added facial expressions.** Player Model Lib tints eyes with a color overlay
+  that only lands on faces built for it — its own seraph faces, or race faces that expose the
+  same `playermodellib-iris` texture. Expressions this mod adds to a race with
+  `IncludeDefaultVariants` / `IncludeAllDefaultVariants` are always Player Model Lib's own
+  seraph faces, taken from Player Model Lib's loaded seraph model on the client (and from the
+  patched player entity on the server) — never from the raw game files, whose vanilla faces
+  cannot take eye color. A race whose eye-color section is missing or points elsewhere is
+  given one that targets `facialexpression`. If a race's *own* faces don't change color, that
+  is something for the race mod to fix in its face shapes. Like other appearance changes, it
+  takes effect on the next world load / reconnect.
 - `eyeheight` and `collision` console commands set the base values, then multiply those values 
   by the race SizeRange to derive the Min and Max values. These Min and Max values can be 
   manually altered in the JSON config file if needed but will be reset if the console command

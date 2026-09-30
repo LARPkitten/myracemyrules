@@ -79,6 +79,9 @@ namespace MyRaceMyRules
         private ICoreServerAPI? _sapi;
         private IServerNetworkChannel? _serverChannel;
 
+        /// <summary>Client: PlayerModelLib's model registry, for the models-loaded hook.</summary>
+        private PlayerModelLib.CustomModelsSystem? _pmlModels;
+
         /// <summary>
         /// True only when the server config file did not exist and had to be created. In that
         /// startup case we seed every discovered race once so the operator can edit them in the
@@ -109,6 +112,11 @@ namespace MyRaceMyRules
         public override void Start(ICoreAPI api)
         {
             base.Start(api);
+
+            // Both sides: the camera-fitting player behavior (attached at runtime, see the
+            // PlayerNowPlaying / PlayerEntitySpawn hooks below).
+            api.RegisterEntityBehaviorClass(AdaptiveEyeHeightBehavior.Code, typeof(AdaptiveEyeHeightBehavior));
+
             // Load the config THIS side will apply, before AssetsLoaded runs.
             if (api.Side == EnumAppSide.Server)
             {
@@ -181,10 +189,22 @@ namespace MyRaceMyRules
         /// </summary>
         public override void Dispose()
         {
-            _sapi?.Event.PlayerJoin -= OnPlayerJoin;
+            if (_sapi != null)
+            {
+                _sapi.Event.PlayerJoin -= OnPlayerJoin;
+                _sapi.Event.PlayerNowPlaying -= OnPlayerNowPlaying;
+            }
             _sapi = null;
 
+            if (_capi != null)
+            {
+                _capi.Event.PlayerEntitySpawn -= OnClientPlayerEntitySpawn;
+                _capi.Event.LevelFinalize -= OnClientLevelFinalize;
+            }
             _capi = null;
+
+            if (_pmlModels != null) _pmlModels.OnCustomModelsLoaded -= OnClientModelsLoaded;
+            _pmlModels = null;
             _serverChannel = null;
             _defaultSkinnableParts = null;
             DetectedRaces = [];
@@ -192,13 +212,42 @@ namespace MyRaceMyRules
             base.Dispose();
         }
 
-        /// <summary>Deep-clone the vanilla player entity's skinnableParts array.</summary>
+        /// <summary>
+        /// Deep-clone the vanilla player entity's skinnableParts array, as PATCHED in memory by
+        /// the JSON patch loaders (notably PlayerModelLib's seraph-skin-parts patch, which
+        /// replaces the facial-expression variants and wires eye color to them).
+        ///
+        /// Server only. The "entities" asset category is server-side (AssetCategory.entities),
+        /// so on the client this asset does not exist; the only thing reachable there is the
+        /// raw game file on disk, which has none of those patches. Merging from it produces
+        /// vanilla face shapes that PlayerModelLib's eye-color overlay cannot target, so the
+        /// client deliberately returns null here and applies default-variant merges live from
+        /// PlayerModelLib's loaded seraph model instead (see OnClientModelsLoaded).
+        /// </summary>
         private static JArray? CaptureDefaultSkinnableParts(ICoreAPI api)
         {
-            JObject? entity = LoadAssetJson(api, RaceDetector.PlayerEntityPath);
-            if (entity == null)
+            if (api.Side == EnumAppSide.Client)
             {
-                api.Logger.Warning("[myracemyrules] Could not resolve the default player entity asset for seraph defaults.");
+                api.Logger.Notification("[myracemyrules] Client: default option list is taken from PlayerModelLib's " +
+                    "loaded seraph model once models are ready (the patched player entity asset is server-side only).");
+                return null;
+            }
+
+            // Deliberately NOT LoadAssetJson: that helper falls back to the on-disk file, which
+            // is unpatched and would silently give the wrong variant list.
+            IAsset? asset = api.Assets.TryGet(new AssetLocation(RaceDetector.PlayerEntityPath));
+            if (asset == null)
+            {
+                api.Logger.Warning("[myracemyrules] Could not resolve the patched player entity asset for seraph defaults; " +
+                    "default-variant merges will be skipped this load.");
+                return null;
+            }
+
+            JObject? entity;
+            try { entity = JObject.Parse(asset.ToText()); }
+            catch (Exception e)
+            {
+                api.Logger.Warning("[myracemyrules] Could not parse the player entity asset for seraph defaults: {0}", e.Message);
                 return null;
             }
 
@@ -220,6 +269,7 @@ namespace MyRaceMyRules
                 .RegisterMessageType<ConfigSyncPacket>();
 
             sapi.Event.PlayerJoin += OnPlayerJoin;
+            sapi.Event.PlayerNowPlaying += OnPlayerNowPlaying;
 
             sapi.ChatCommands
                 .Create("myracemyrules")
@@ -1000,6 +1050,16 @@ namespace MyRaceMyRules
             }, player);
         }
 
+        /// <summary>
+        /// The player entity exists and is initialized by now (it may not be at PlayerJoin), so
+        /// this is the earliest safe point to attach the camera behavior server-side.
+        /// </summary>
+        private void OnPlayerNowPlaying(IServerPlayer player)
+        {
+            if (_sapi == null) return;
+            AdaptiveEyeHeightBehavior.EnsureAttached(_sapi, player.Entity);
+        }
+
         private void LoadServerConfig(ICoreAPI api)
         {
             bool configMissing = IsServerConfigMissing(api);
@@ -1085,6 +1145,57 @@ namespace MyRaceMyRules
                 .RegisterChannel(ChannelName)
                 .RegisterMessageType<ConfigSyncPacket>()
                 .SetMessageHandler<ConfigSyncPacket>(OnServerConfigSync);
+
+            // Attach the camera behavior to every player entity the client knows about (own
+            // player included). LevelFinalize is a safety net in case the own entity spawned
+            // before this handler was registered.
+            capi.Event.PlayerEntitySpawn += OnClientPlayerEntitySpawn;
+            capi.Event.LevelFinalize += OnClientLevelFinalize;
+
+            // Default-variant merges (IncludeDefaultVariants / IncludeAllDefaultVariants) cannot
+            // run through the asset path on the client — the patched player entity asset is
+            // server-side only (see CaptureDefaultSkinnableParts). Apply them live from
+            // PlayerModelLib's loaded seraph model, which comes from the server-synced entity
+            // type and therefore carries PML's patches (playermodellib:seraphfaces/* faces with
+            // the playermodellib-iris texture that eye color targets).
+            _pmlModels = capi.ModLoader.GetModSystem<PlayerModelLib.CustomModelsSystem>();
+            if (_pmlModels != null)
+            {
+                _pmlModels.OnCustomModelsLoaded += OnClientModelsLoaded;
+                if (_pmlModels.ModelsLoaded) OnClientModelsLoaded();
+            }
+            else
+            {
+                capi.Logger.Warning("[myracemyrules] PlayerModelLib's CustomModelsSystem not found; default-variant " +
+                    "merges will not apply on this client.");
+            }
+        }
+
+        /// <summary>
+        /// Client: PlayerModelLib has finished loading models (AssetsFinalize, 0.21). Merge the
+        /// configured default variants into each race from PML's in-memory seraph model.
+        /// Idempotent, so it is safe alongside the sync-triggered live apply.
+        /// </summary>
+        private void OnClientModelsLoaded()
+        {
+            if (_capi == null) return;
+            if (Config.Overrides.Count == 0) return;
+
+            bool ok = LiveModelUpdater.TryApply(_capi, Config);
+            _capi.Logger.Notification("[myracemyrules] Client: applied default-variant merges from PlayerModelLib's " +
+                "seraph model ({0}).", ok ? "complete" : "partial; see warnings above");
+        }
+
+        private void OnClientPlayerEntitySpawn(IClientPlayer player)
+        {
+            if (_capi == null) return;
+            AdaptiveEyeHeightBehavior.EnsureAttached(_capi, player.Entity);
+        }
+
+        private void OnClientLevelFinalize()
+        {
+            if (_capi == null) return;
+            AdaptiveEyeHeightBehavior.EnsureAttached(_capi, _capi.World.Player?.Entity);
         }
 
         private void OnServerConfigSync(ConfigSyncPacket packet)
@@ -1584,12 +1695,15 @@ namespace MyRaceMyRules
             RaceOverrideEntry ov, string raceForLog)
         {
             // Race-level: give every part this race defines the complete default variant list.
+            // (Client: no snapshot by design — merged live from PlayerModelLib's seraph model
+            // in OnClientModelsLoaded, so the skip below is expected there.)
             if (ov.IncludeAllDefaultVariants)
             {
                 if (_defaultSkinnableParts == null)
                 {
-                    api.Logger.Warning("[myracemyrules] ({0}) IncludeAllDefaultVariants requested but the default " +
-                        "option list could not be read; skipping.", raceForLog);
+                    if (api.Side == EnumAppSide.Server)
+                        api.Logger.Warning("[myracemyrules] ({0}) IncludeAllDefaultVariants requested but the default " +
+                            "option list could not be read; skipping.", raceForLog);
                 }
                 else
                 {
@@ -1609,8 +1723,11 @@ namespace MyRaceMyRules
                 if (pov.IncludeDefaultVariants)
                 {
                     if (_defaultSkinnableParts == null)
-                        api.Logger.Warning("[myracemyrules] ({0}/{1}) IncludeDefaultVariants requested but the " +
-                            "default option list could not be read; skipping.", raceForLog, partCode);
+                    {
+                        if (api.Side == EnumAppSide.Server)
+                            api.Logger.Warning("[myracemyrules] ({0}/{1}) IncludeDefaultVariants requested but the " +
+                                "default option list could not be read; skipping.", raceForLog, partCode);
+                    }
                     else
                         MergeDefaultVariants(api, parts, partCode, raceForLog);
                 }
@@ -1885,26 +2002,38 @@ namespace MyRaceMyRules
         }
 
         /// <summary>
-        /// Auto-repair for eye color on race-added facial expressions. - WIP, not yet working
+        /// Auto-repair for eye color on race-added facial expressions.
         ///
-        /// PlayerModelLib renders the "eyecolor" texture part as an overlay whose target texture
-        /// code is model-prefixed: "<model>-facialexpression-playermodellib-iris". That
-        /// texture only exists if the race's OWN "facialexpression" part contains the selected
-        /// expression variant (PML prefixes each expression shape's "playermodellib-iris" texture
-        /// with the model code when it loads that model's part). A race that offers facial
-        /// expressions without a matching, fully-populated "facialexpression" part — and an
-        /// "eyecolor" part that targets it — ends up with an overlay that lands nowhere, so the
-        /// eyes never take on the chosen color.
+        /// How PlayerModelLib actually applies eye color (PlayerSkinBehavior.AddSkinPartsTextures):
+        /// the "eyecolor" texture part is an overlay whose target texture code is
+        /// "&lt;model&gt;-&lt;targetSkinPart&gt;-&lt;textureTarget&gt;", i.e.
+        /// "&lt;model&gt;-facialexpression-playermodellib-iris". The overlay only lands if the
+        /// CURRENTLY APPLIED expression shape file declares a texture named exactly
+        /// "playermodellib-iris" — PML loads the face shape at tesselation time (per player,
+        /// per applied variant) and prefixes its texture codes with "&lt;model&gt;-facialexpression-".
+        /// Nothing about iris textures is precomputed at model load.
         ///
-        /// This makes such a race self-consistent, using the default race (seraph) as the
-        /// canonical source:
+        /// Consequently, eye color works on a face iff: (a) the face shape declares
+        /// "playermodellib-iris", (b) the race's "eyecolor" part has textureTarget
+        /// "playermodellib-iris" and targetSkinParts containing "facialexpression", and (c) the
+        /// chosen eye-color variant texture exists. PML's own seraph faces
+        /// (playermodellib:seraphfaces/*) satisfy (a); vanilla seraph faces do not, which is
+        /// why the default-variant source MUST be the PML-patched seraph part list, never the
+        /// raw game file (see CaptureDefaultSkinnableParts).
+        ///
+        /// What this method does, using the (patched) default race as the canonical source:
         ///   1. If the race has neither a "facialexpression" nor an "eyecolor" part, it does not
         ///      offer expressions at all — leave it untouched.
         ///   2. Otherwise ensure a "facialexpression" part exists (clone seraph's if missing) and
-        ///      merge in every seraph expression variant it lacks, so PML generates the
-        ///      race-prefixed iris textures for each expression.
+        ///      merge in every seraph expression variant it lacks.
         ///   3. Ensure an "eyecolor" part exists (clone seraph's if missing) whose
         ///      "targetskinparts" includes "facialexpression".
+        ///
+        /// Limits: it does not inspect the race's OWN face shapes for (a), nor set
+        /// "texturetarget" for (b); a race whose own faces or eyecolor part are mis-wired needs
+        /// fixing in the race mod. Server only (needs the patched snapshot); on the client the
+        /// variant merge of step 2 happens live in OnClientModelsLoaded, while steps 1 and 3
+        /// (adding whole parts) are load-only and therefore rely on the server-synced entity data.
         ///
         /// Idempotent: re-running makes no further changes once a race is consistent. Returns
         /// true if it changed anything (so the caller knows whether to persist the asset).
@@ -1930,8 +2059,11 @@ namespace MyRaceMyRules
 
             if (_defaultSkinnableParts == null)
             {
-                api.Logger.Warning("[myracemyrules] ({0}) FixEyeColor skipped: the default (seraph) skin-part " +
-                    "snapshot is unavailable.", raceForLog);
+                // Expected on the client (no patched snapshot there; the variant merge happens
+                // live in OnClientModelsLoaded). Only worth a warning on the server.
+                if (api.Side == EnumAppSide.Server)
+                    api.Logger.Warning("[myracemyrules] ({0}) FixEyeColor skipped: the default (seraph) skin-part " +
+                        "snapshot is unavailable.", raceForLog);
                 return false;
             }
             JArray defaults = _defaultSkinnableParts;

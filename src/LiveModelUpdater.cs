@@ -10,26 +10,29 @@ namespace MyRaceMyRules
     /// <summary>
     /// Live (in-session) application of overrides to PlayerModelLib's in-memory model data.
     ///
-    /// Purpose: on a player's FIRST join to a server, their client applied nothing at load
-    /// (empty cache), so the character-creation dialog would show the races' original
-    /// SizeRange / classes / visibility. The server's sync packet arrives right after join —
-    /// before the dialog opens — so we patch the relevant values into
-    /// CustomModelsSystem.CustomModels here, making server settings apply to character
-    /// creation on the very first session.
+    /// Two callers:
+    ///   1. First join (multiplayer): the client applied nothing at load (empty cache), so the
+    ///      character-creation dialog would show the races' original SizeRange / classes /
+    ///      visibility. The server's sync packet arrives right after join — before the dialog
+    ///      opens — so we patch the relevant values into CustomModelsSystem.CustomModels here.
+    ///   2. Every client load (OnClientModelsLoaded): default-variant merges
+    ///      (IncludeDefaultVariants / IncludeAllDefaultVariants). These CANNOT go through the
+    ///      client's asset path: the "entities" asset category is server-side only, so the
+    ///      client has no copy of the PML-patched player entity — only the raw game file on
+    ///      disk, whose facial-expression variants are vanilla shapes without the
+    ///      "playermodellib-iris" texture that PML's eye-color overlay targets. Merging from
+    ///      it gave race-added faces whose eye color could never change. PML's loaded seraph
+    ///      model, by contrast, is built from the server-synced (patched) entity type, so it
+    ///      is the correct source on the client. The server keeps using the asset path.
     ///
-    /// Scope: ONLY plain data fields that drive the character-creation dialog —
-    /// SizeRange, Enabled, AvailableClasses, ExtraTraits. Deliberately NOT shapes/textures
-    /// (PlayerModelLib's crash-prone area) and NOT EyeHeight/CollisionBox (gameplay-behavior
-    /// values that are safer applied at next load via the normal asset path; they don't
-    /// affect the creation dialog).
+    /// Scope: plain data fields that drive the character-creation dialog — SizeRange, Enabled,
+    /// AvailableClasses, ExtraTraits — plus skin-part variant merges/filters. Deliberately NOT
+    /// shapes/textures (PlayerModelLib's crash-prone area) and NOT EyeHeight/CollisionBox
+    /// (gameplay-behavior values that are safer applied at next load via the normal asset
+    /// path; they don't affect the creation dialog).
     ///
-    /// The eye-color/facial-expression auto-repair (FixEyeColor in MyRaceMyRulesModSystem) is
-    /// also deliberately NOT mirrored here. It works by giving a race the facial-expression
-    /// variants it needs so PlayerModelLib generates the model-prefixed iris overlay textures
-    /// (<model>-facialexpression-playermodellib-iris) during LoadParts. Those textures are
-    /// built once at load; adding a variant to an already-loaded model in memory would not
-    /// regenerate them, so the fix can only take effect through the asset path at load. It
-    /// converges on the next world load / reconnect, like EyeHeight/CollisionBox above.
+    /// Adding whole parts (FixEyeColor steps 1 and 3, re-enabling a disabled part) remains
+    /// load-only: PML filters disabled parts out at load, so there is no object to restore.
     ///
     /// Why reflection: the CustomModels dictionary and CustomModelData fields (Enabled,
     /// AvailableClasses, ExtraTraits, EyeHeight, CollisionBox) are visible in PlayerModelLib's

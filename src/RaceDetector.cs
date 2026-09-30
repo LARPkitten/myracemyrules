@@ -231,12 +231,14 @@ namespace MyRaceMyRules
                 }
             }
 
-            // The asset manager may not have registered the base player entity at this phase even when
-            // the file exists on disk in the actual game install. Fall through to a direct filesystem
-            // read using the game root the launcher is using.
+            // The "entities" asset category is server-side only, so on the client this asset never
+            // exists. Fall through to the raw game file on disk. NOTE: that file is UNPATCHED (no
+            // JSON patches from PlayerModelLib or other mods) — fine for detecting the race and
+            // its part codes, never use it as a source of default variants.
             if (TryLoadPlayerEntityJsonFromDisk(out JObject? fsJson, out string? resolvedPath))
             {
-                api.Logger.Notification("[myracemyrules] Resolved seraph player entity from the installed game files on disk: '{0}'.", resolvedPath);
+                api.Logger.Notification("[myracemyrules] Resolved seraph player entity from the installed game files on disk " +
+                    "(unpatched; detection only): '{0}'.", resolvedPath);
                 return null;
             }
 
