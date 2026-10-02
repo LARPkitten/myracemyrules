@@ -1846,6 +1846,10 @@ namespace MyRaceMyRules
                 if (!string.IsNullOrEmpty(c)) byCode[c!] = v;
             }
 
+            // JSON null ("AddVariants": null, the default) is a no-op, not an error.
+            if (addVariants == null || addVariants.Type == JTokenType.Null)
+                return;
+
             int added = 0, updated = 0;
 
             void Upsert(string code, JObject built)
