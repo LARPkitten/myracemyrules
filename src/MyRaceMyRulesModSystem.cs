@@ -66,6 +66,9 @@ namespace MyRaceMyRules
 
         public List<DetectedRace> DetectedRaces = [];
 
+        /// <summary>Optional settings-screen bridge (ConfigKit/configlib via reflection); null when neither is installed.</summary>
+        private ConfigUiBridge? _configUiBridge;
+
         /// <summary>Hash of the config this side actually APPLIED at load (for change detection).</summary>
         private string _appliedHash = "";
 
@@ -109,6 +112,18 @@ namespace MyRaceMyRules
         // Shared
         // ---------------------------------------------------------------------
 
+        public override void StartPre(ICoreAPI api)
+        {
+            base.StartPre(api);
+
+            // Register an in-game settings screen with ConfigKit or configlib if present. This is
+            // purely a renderer front-end; the authoritative config, sync and migration are
+            // unchanged. Kept behind IsModEnabled (inside TryRegister) so the mod loads normally
+            // when neither library is installed — the config file and /mrmr commands still work.
+            _configUiBridge = new ConfigUiBridge(api, this);
+            _configUiBridge.TryRegister();
+        }
+
         public override void Start(ICoreAPI api)
         {
             base.Start(api);
@@ -142,6 +157,10 @@ namespace MyRaceMyRules
         {
             base.AssetsLoaded(api);
             DetectedRaces = RaceDetector.DetectRaces(api);
+
+            // Now that races are known, refresh the settings-screen model (if a library took it).
+            try { _configUiBridge?.SyncModelFromReal(); }
+            catch (Exception e) { api.Logger.Warning("[myracemyrules] Settings-screen model refresh failed (non-fatal): {0}", e.Message); }
 
             // Snapshot the canonical "all options" list (seraph's parts) BEFORE mutating
             // anything, so restricting seraph can't shrink what "all" means elsewhere.
@@ -205,6 +224,7 @@ namespace MyRaceMyRules
 
             if (_pmlModels != null) _pmlModels.OnCustomModelsLoaded -= OnClientModelsLoaded;
             _pmlModels = null;
+            _configUiBridge = null;
             _serverChannel = null;
             _defaultSkinnableParts = null;
             DetectedRaces = [];
@@ -818,6 +838,147 @@ namespace MyRaceMyRules
                 Config.Overrides[raceCode] = ov;
             }
             return ov;
+        }
+
+        /// <summary>
+        /// Apply a UI view-entry for one race by DIFFING it against the current authoritative
+        /// state and changing only the fields that actually differ — so a stale/blank model field
+        /// can never clobber a value set via chat command or JSON. Each changed field goes through
+        /// the existing validated setters (shared clamps/guards/semantics). Called server-side by
+        /// <see cref="ConfigUiBridge"/>. A single net save/reapply happens via the setters only for
+        /// fields that changed; if nothing differs, nothing is written.
+        /// </summary>
+        public void ApplyUiRaceEntryDiff(ICoreServerAPI api, string raceCode, RaceUiEntry e)
+        {
+            if (!GetTargetRaceCodes(raceCode).Any()) return; // undetected/miscased race: ignore
+            bool isSeraph = string.Equals(raceCode, RaceDetector.SeraphCode, StringComparison.OrdinalIgnoreCase);
+
+            DetectedRace? race = DetectedRaces.FirstOrDefault(r => string.Equals(r.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+            Config.Overrides.TryGetValue(raceCode, out var cur);
+
+            // Enabled: model null => leave default; set only if different from current effective.
+            if (e.Enabled.HasValue)
+            {
+                bool curEnabled = cur?.Enabled ?? race?.Enabled ?? true;
+                if (cur?.Enabled != e.Enabled || curEnabled != e.Enabled.Value) SetEnabled(api, raceCode, e.Enabled.Value);
+            }
+
+            // Name / Description: compare to the current override value (null when unset).
+            string? curName = cur?.Name;
+            string modelName = string.IsNullOrWhiteSpace(e.Name) ? "" : e.Name.Trim();
+            if ((curName ?? "") != modelName)
+            {
+                if (modelName.Length == 0) SetDefaultName(api, raceCode);
+                else SetName(api, raceCode, modelName);
+            }
+            string? curDesc = cur?.Description;
+            string modelDesc = string.IsNullOrWhiteSpace(e.Description) ? "" : e.Description.Trim();
+            if ((curDesc ?? "") != modelDesc)
+            {
+                if (modelDesc.Length == 0) SetDefaultDescription(api, raceCode);
+                else SetDescription(api, raceCode, modelDesc);
+            }
+
+            // Numeric fields — not for seraph. Compare the model's text to the current override's
+            // textual form so an unchanged field (and its hand-set Min/Max) is never rewritten.
+            if (!isSeraph)
+            {
+                if (NumericChanged(FormatPair(cur?.SizeRange), e.SizeRange)) ApplyUiSizeRange(api, raceCode, e.SizeRange);
+                if (NumericChanged(cur?.EyeHeight?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), e.EyeHeight))
+                    ApplyUiEyeHeight(api, raceCode, e.EyeHeight);
+                if (NumericChanged(FormatPair(cur?.CollisionBox), e.Collision)) ApplyUiCollision(api, raceCode, e.Collision);
+            }
+
+            // Classes / traits: only re-set when the desired list differs from the current
+            // effective list, so a null ("keep race default") is not pinned by an unrelated edit.
+            var curClasses = cur?.AvailableClasses ?? race?.AvailableClasses ?? new List<string>();
+            if (!SameList(curClasses, e.AvailableClasses))
+                EditListField(api, raceCode, ListField.Classes, ListOp.Set, new List<string>(e.AvailableClasses ?? new List<string>()));
+            var curTraits = cur?.ExtraTraits ?? race?.ExtraTraits ?? new List<string>();
+            if (!SameList(curTraits, e.ExtraTraits))
+                EditListField(api, raceCode, ListField.Traits, ListOp.Set, new List<string>(e.ExtraTraits ?? new List<string>()));
+
+            // IncludeAllDefaultVariants + per-section filters: write directly only when changed,
+            // then one save/reapply for this group.
+            bool sectionsOrFlagChanged = false;
+            var ov = GetOrCreateOverride(raceCode);
+            if (ov.IncludeAllDefaultVariants != e.IncludeAllDefaultVariants) { ov.IncludeAllDefaultVariants = e.IncludeAllDefaultVariants; sectionsOrFlagChanged = true; }
+
+            if (e.Sections != null)
+            {
+                foreach ((string part, PartUiEntry pe) in e.Sections)
+                {
+                    if (pe == null) continue;
+                    ov.SkinnableParts.TryGetValue(part, out var pov);
+                    List<string>? desiredAllowed = (pe.AllowedVariants is { Count: > 0 }) ? new List<string>(pe.AllowedVariants) : null;
+                    List<string>? desiredRemove = (pe.RemoveVariants is { Count: > 0 }) ? new List<string>(pe.RemoveVariants) : null;
+
+                    bool changed = pov == null
+                        ? (pe.Enabled.HasValue || desiredAllowed != null || desiredRemove != null)
+                        : (pov.Enabled != pe.Enabled || !SameList(pov.AllowedVariants ?? new List<string>(), desiredAllowed ?? new List<string>())
+                           || !SameList(pov.RemoveVariants ?? new List<string>(), desiredRemove ?? new List<string>()));
+                    if (!changed) continue;
+
+                    if (pov == null) { pov = new SkinnablePartOverride(); ov.SkinnableParts[part] = pov; }
+                    pov.Enabled = pe.Enabled;
+                    pov.AllowedVariants = desiredAllowed;
+                    pov.RemoveVariants = desiredRemove;
+                    sectionsOrFlagChanged = true;
+                }
+            }
+            if (sectionsOrFlagChanged)
+            {
+                SaveConfig(api);
+                ReapplyOverrides(api);
+            }
+        }
+
+        private static bool NumericChanged(string? current, string model) =>
+            (current ?? "").Trim() != (model ?? "").Trim();
+
+        private static string FormatPair(float[]? v) =>
+            v is { Length: 2 }
+                ? $"{v[0].ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)} {v[1].ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}"
+                : "";
+
+        private static bool SameList(List<string> a, List<string> b)
+        {
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+                if (!string.Equals(a[i], b[i], StringComparison.Ordinal)) return false;
+            return true;
+        }
+
+        private void ApplyUiSizeRange(ICoreServerAPI api, string raceCode, string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) { SetDefaultSizeRange(api, raceCode); return; }
+            if (string.Equals(text.Trim(), "default", StringComparison.OrdinalIgnoreCase)) { SetDefaultSizeRange(api, raceCode); return; }
+            string[] p = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (p.Length == 2 && TryParseInvariant(p[0], out float min) && TryParseInvariant(p[1], out float max))
+                SetSizeRange(api, raceCode, min, max); // clamps min to the allowed floor
+        }
+
+        private void ApplyUiEyeHeight(ICoreServerAPI api, string raceCode, string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || string.Equals(text.Trim(), "default", StringComparison.OrdinalIgnoreCase))
+            { SetDefaultEyeHeight(api, raceCode); return; }
+            if (!TryParseInvariant(text, out float baseEye)) return;
+            DetectedRace? dr = DetectedRaces.FirstOrDefault(d => string.Equals(d.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+            if (dr?.SizeRange is not { Length: 2 }) return;
+            float[] range = ScaleBySizeRange(dr, baseEye);
+            SetEyeHeight(api, raceCode, baseEye, range[0], range[1]);
+        }
+
+        private void ApplyUiCollision(ICoreServerAPI api, string raceCode, string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || string.Equals(text.Trim(), "default", StringComparison.OrdinalIgnoreCase))
+            { SetDefaultCollisionBox(api, raceCode); return; }
+            string[] p = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (p.Length != 2 || !TryParseInvariant(p[0], out float w) || !TryParseInvariant(p[1], out float h)) return;
+            DetectedRace? dr = DetectedRaces.FirstOrDefault(d => string.Equals(d.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+            if (dr?.SizeRange is not { Length: 2 }) return;
+            float[][] range = ScaleCollisionBySizeRange(dr, w, h);
+            SetCollisionBox(api, raceCode, [w, h], range[0], range[1]);
         }
 
         private void SaveConfig(ICoreServerAPI api)

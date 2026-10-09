@@ -31,6 +31,16 @@ Everything lives in one file on the **server**, created for you on first run:
 /ModConfig/myracemyrules.json
 ```
 
+### In-game settings screen (optional)
+
+If you have **[ConfigKit](https://mods.vintagestory.at/configkit)** *or*
+**[Config lib](https://mods.vintagestory.at/configlib)** installed (whichever you already use —
+you don't need both, and this mod doesn't require either), My Race My Rules adds its settings to
+that mod's in-game config screen, so you can edit races with dropdowns and checkboxes instead of
+the JSON file. Changes you make there are applied by the server exactly like the console commands,
+and need the `controlserver` privilege. With neither library installed there's simply no screen —
+the config file and the `/mrmr` commands work the same as always.
+
 ### What you can override, per race
 
 | Setting | What it controls |
