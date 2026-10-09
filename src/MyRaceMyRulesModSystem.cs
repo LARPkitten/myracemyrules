@@ -323,6 +323,66 @@ namespace MyRaceMyRules
             if (string.Equals(action, "help", StringComparison.OrdinalIgnoreCase))
                 return TextCommandResult.Success(DescribeHelp());
 
+            if (string.Equals(action, "set", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(action, "add", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(action, "remove", StringComparison.OrdinalIgnoreCase))
+            {
+                // Grammar: <race|all> set|add|remove <trait|class> <code...|none|default>.
+                // The field word sits in value1; the codes (or a keyword) follow in value2.
+                string fieldWord = GetArg(args, 2) ?? "";
+                if (!TryParseListField(fieldWord, out ListField field))
+                    return TextCommandResult.Error($"Usage: /myracemyrules <mod:race|all> {action} <trait|class> <code> [code ...]");
+
+                var tokens = (GetArg(args, 3) ?? "")
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .ToList();
+
+                string fieldName = field == ListField.Traits ? "trait" : "class";
+
+                if (string.Equals(action, "set", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Keyword tokens (reserved; must appear alone). Which empty-keyword applies
+                    // depends on the field: traits '[]' = no traits (keyword 'none'); classes
+                    // '[]' = ALL classes in PlayerModelLib (keyword 'all'). 'default' => null.
+                    bool hasNone = tokens.Any(t => string.Equals(t, "none", StringComparison.OrdinalIgnoreCase));
+                    bool hasAll = tokens.Any(t => string.Equals(t, "all", StringComparison.OrdinalIgnoreCase));
+                    bool hasDefault = tokens.Any(t => string.Equals(t, "default", StringComparison.OrdinalIgnoreCase));
+
+                    if ((hasNone || hasAll || hasDefault) && tokens.Count != 1)
+                        return TextCommandResult.Error($"'none', 'all', and 'default' must be used on their own, not mixed with {fieldName} codes.");
+
+                    if (field == ListField.Traits)
+                    {
+                        if (hasAll)
+                            return TextCommandResult.Error("'all' isn't valid for traits. Use 'none' to grant no extra traits, 'default' to restore the race's own, or list trait codes.");
+                        if (hasDefault) return EditListField(api, first, field, ListOp.Set, codes: null);
+                        if (hasNone) return EditListField(api, first, field, ListOp.Set, codes: new List<string>());
+                        if (tokens.Count == 0)
+                            return TextCommandResult.Error("Usage: /myracemyrules <mod:race|all> set trait <code> [code ...]  (use 'none' for no traits, 'default' to restore the race's own).");
+                    }
+                    else // Classes: [] means ALL classes; there is no "no classes" state.
+                    {
+                        if (hasNone)
+                            return TextCommandResult.Error("Classes can't be emptied: in PlayerModelLib an empty class list means ALL classes. Use 'set class all' for that, 'default' to restore the race's own, or list class codes.");
+                        if (hasDefault) return EditListField(api, first, field, ListOp.Set, codes: null);
+                        if (hasAll) return EditListField(api, first, field, ListOp.Set, codes: new List<string>());
+                        if (tokens.Count == 0)
+                            return TextCommandResult.Error("Usage: /myracemyrules <mod:race|all> set class <code> [code ...]  (use 'all' for every class, 'default' to restore the race's own).");
+                    }
+
+                    var setCodes = tokens.Distinct(StringComparer.Ordinal).ToList();
+                    return EditListField(api, first, field, ListOp.Set, setCodes);
+                }
+
+                // add / remove
+                var editCodes = tokens.Distinct(StringComparer.Ordinal).ToList();
+                if (editCodes.Count == 0)
+                    return TextCommandResult.Error($"Usage: /myracemyrules <mod:race|all> {action} {fieldName} <code> [code ...]");
+
+                ListOp op = string.Equals(action, "add", StringComparison.OrdinalIgnoreCase) ? ListOp.Add : ListOp.Remove;
+                return EditListField(api, first, field, op, editCodes);
+            }
+
             if (string.Equals(action, "enableall", StringComparison.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrWhiteSpace(GetArg(args, 2))) return TextCommandResult.Error("Usage: /myracemyrules mod:race or all, then enableall part");
@@ -793,7 +853,11 @@ namespace MyRaceMyRules
                     .OrderBy(code => code, StringComparer.OrdinalIgnoreCase)];
             }
 
-            return [raceCode];
+            // Resolve to the canonical FullCode; empty if undetected (so callers reject it
+            // instead of writing a junk/miscased override).
+            DetectedRace? match = DetectedRaces.FirstOrDefault(
+                r => string.Equals(r.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+            return match != null ? [match.FullCode] : [];
         }
 
         private static int CountRaceOverrides(RaceOverrideEntry? overrideEntry)
@@ -842,6 +906,9 @@ namespace MyRaceMyRules
             sb.AppendLine("  /myracemyrules mod:race enableall part");
             sb.AppendLine("  /myracemyrules all sizerange min max");
             sb.AppendLine("  /myracemyrules all enableall part");
+            sb.AppendLine("  /myracemyrules <mod:race|all> set <trait|class> <code...|none|all|default>");
+            sb.AppendLine("  /myracemyrules <mod:race|all> add <trait|class> <code> [code ...]");
+            sb.AppendLine("  /myracemyrules <mod:race|all> remove <trait|class> <code> [code ...]");
             sb.AppendLine("  /myracemyrules traits");
             sb.AppendLine();
             sb.AppendLine("Aliases: /mrmr");
@@ -852,6 +919,7 @@ namespace MyRaceMyRules
             sb.AppendLine("  - 'name' and 'description' work for seraph too (they come from the game's language file)");
             sb.AppendLine("  - 'eyeheight' and 'collision' also scale by the race's SizeRange to produce a min/max range");
             sb.AppendLine("  - 'traits' writes every installed trait (code, name, description, attribute changes) to a file in the game's Logs folder");
+            sb.AppendLine("  - set/add/remove edit a race's trait or class list; 'set' replaces it, 'add'/'remove' adjust it. 'default' restores the race's own. For traits 'none' = no traits; for classes 'all' = every class (an empty class list is unrestricted). 'add'/'set' reject trait codes that aren't installed (run 'traits' to list codes)");
             return sb.ToString();
         }  
 
@@ -943,6 +1011,263 @@ namespace MyRaceMyRules
                 codes.AddRange(((JArray)addVariants).Select(t => (t as JValue)?.Value?.ToString() ?? "")
                     .Where(s => s.Length > 0));
             return codes;
+        }
+
+        /// <summary>Which flat code list on a RaceOverrideEntry a set/add/remove command targets.</summary>
+        private enum ListField { Traits, Classes }
+
+        /// <summary>How a set/add/remove command changes the targeted list.</summary>
+        private enum ListOp { Set, Add, Remove }
+
+        /// <summary>Map the console field word to a <see cref="ListField"/> (trait[s] / class[es]).</summary>
+        private static bool TryParseListField(string word, out ListField field)
+        {
+            if (string.Equals(word, "trait", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(word, "traits", StringComparison.OrdinalIgnoreCase))
+            {
+                field = ListField.Traits;
+                return true;
+            }
+            if (string.Equals(word, "class", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(word, "classes", StringComparison.OrdinalIgnoreCase))
+            {
+                field = ListField.Classes;
+                return true;
+            }
+            field = default;
+            return false;
+        }
+
+        /// <summary>
+        /// The exact trait codes the game knows about (vanilla + every mod), straight from the
+        /// game's CharacterSystem — the same source <see cref="DumpTraitsToFile"/> reports.
+        /// Returns null when the catalog can't be read, so the caller skips validation rather
+        /// than reject everything. The game resolves trait codes CASE-SENSITIVELY (its
+        /// TraitsByCode is an ordinal dictionary), so these keys are returned verbatim and two
+        /// codes differing only in case are distinct entries. Only traits are validated this
+        /// way; class edits are applied without an allowlist (matching the mod's "new options
+        /// included automatically" philosophy), so a mistyped class code is simply ignored by
+        /// the game's own case-sensitive class lookup.
+        /// </summary>
+        private List<string>? GetInstalledTraitCodes(ICoreServerAPI api)
+        {
+            Dictionary<string, Trait>? traitsByCode = api.ModLoader.GetModSystem<CharacterSystem>()?.TraitsByCode;
+            if (traitsByCode == null || traitsByCode.Count == 0) return null;
+            return traitsByCode.Keys.Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
+        }
+
+        /// <summary>Outcome of resolving a user-typed trait code against the installed catalog.</summary>
+        private enum TraitResolveStatus { Exact, Corrected, Ambiguous, Unknown }
+
+        /// <summary>
+        /// Resolve a user-typed trait code to its real catalog casing, honoring the game's
+        /// case-sensitive lookup:
+        ///   Exact     - the code matches a catalog key verbatim; use as-is.
+        ///   Corrected - no exact match, but exactly ONE case-insensitive match; use that key's
+        ///               real casing (fixes an ordinary typo so the trait actually applies).
+        ///   Ambiguous - more than one case-insensitive match (e.g. two mods ship 'Precise' and
+        ///               'precise'); we must not guess — <paramref name="matches"/> lists them.
+        ///   Unknown   - no match at all.
+        /// </summary>
+        private static TraitResolveStatus ResolveTraitCode(string input, List<string> catalog, out string resolved, out List<string> matches)
+        {
+            resolved = input;
+            matches = catalog.Where(c => string.Equals(c, input, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            if (matches.Any(c => string.Equals(c, input, StringComparison.Ordinal)))
+            {
+                resolved = input; // exact (case-sensitive) hit wins outright
+                return TraitResolveStatus.Exact;
+            }
+            if (matches.Count == 1) { resolved = matches[0]; return TraitResolveStatus.Corrected; }
+            if (matches.Count > 1) return TraitResolveStatus.Ambiguous;
+            return TraitResolveStatus.Unknown;
+        }
+
+        /// <summary>Read the override's current value for the targeted list field.</summary>
+        private static List<string>? GetOverrideList(RaceOverrideEntry ov, ListField field) =>
+            field == ListField.Traits ? ov.ExtraTraits : ov.AvailableClasses;
+
+        /// <summary>Write the targeted list field on the override (null = restore race default).</summary>
+        private static void SetOverrideList(RaceOverrideEntry ov, ListField field, List<string>? value)
+        {
+            if (field == ListField.Traits) ov.ExtraTraits = value;
+            else ov.AvailableClasses = value;
+        }
+
+        /// <summary>
+        /// The race's effective list for a field as config currently expresses it: the
+        /// override's value if set (non-null), otherwise the race mod's own value, otherwise
+        /// empty. This is the baseline 'add'/'remove' edit from. The mod applies these lists by
+        /// overwriting the model's list wholesale, so the stored result must always be the
+        /// complete desired list, never a delta.
+        /// </summary>
+        private List<string> GetEffectiveList(string raceCode, RaceOverrideEntry ov, ListField field)
+        {
+            List<string>? ovList = GetOverrideList(ov, field);
+            if (ovList != null) return new List<string>(ovList);
+
+            DetectedRace? race = DetectedRaces.FirstOrDefault(
+                r => string.Equals(r.FullCode, raceCode, StringComparison.OrdinalIgnoreCase));
+            List<string>? raceList = race == null ? null : (field == ListField.Traits ? race.ExtraTraits : race.AvailableClasses);
+            return raceList != null ? new List<string>(raceList) : new List<string>();
+        }
+
+        /// <summary>
+        /// Standardized set/add/remove on a race's trait or class list (or every race, for
+        /// "all"). Stored value: null = "leave the race's default", a non-empty list = that
+        /// exact set. The empty list [] differs by field: for traits [] = no extra traits; for
+        /// classes [] = ALL classes (PlayerModelLib treats an empty allow-list as unrestricted).
+        /// Callers map the keyword accordingly ('none' -> [] for traits, 'all' -> [] for classes).
+        ///
+        ///   Set  : store the given codes verbatim (null = restore default; [] per field above).
+        ///   Add  : start from the effective list, append codes not already present, store it.
+        ///   Remove: start from the effective list, drop the given codes, store the remainder.
+        ///
+        /// On Set/Add of traits, unknown codes (not in the installed catalog) are rejected and
+        /// nothing is applied. Class codes are not validated (see
+        /// <see cref="GetInstalledTraitCodes"/>).
+        /// </summary>
+        private TextCommandResult EditListField(ICoreServerAPI api, string target, ListField field, ListOp op, List<string>? codes)
+        {
+            var targets = GetTargetRaceCodes(target);
+            if (!targets.Any())
+                return TextCommandResult.Error($"Race '{target}' is not detected on this server. Use /myracemyrules to list detected races.");
+
+            string fieldName = field == ListField.Traits ? "trait" : "class";
+
+            // Traits only: resolve each code against the catalog honoring the game's
+            // case-sensitive lookup, for operations that introduce codes (Set/Add, not Remove).
+            // Reject unknown codes; reject casing collisions we can't resolve; canonicalize an
+            // unambiguous case mismatch so the trait actually applies at runtime. Remove is not
+            // validated (dropping a code never needs the catalog).
+            if (field == ListField.Traits && codes != null && codes.Count > 0 && op != ListOp.Remove)
+            {
+                List<string>? catalog = GetInstalledTraitCodes(api);
+                if (catalog != null)
+                {
+                    var unknown = new List<string>();
+                    var ambiguous = new List<string>();
+                    var resolvedCodes = new List<string>(codes.Count);
+
+                    foreach (string code in codes)
+                    {
+                        switch (ResolveTraitCode(code, catalog, out string resolved, out List<string> matches))
+                        {
+                            case TraitResolveStatus.Exact:
+                            case TraitResolveStatus.Corrected:
+                                resolvedCodes.Add(resolved);
+                                break;
+                            case TraitResolveStatus.Ambiguous:
+                                ambiguous.Add($"{code} (did you mean {string.Join(" or ", matches)}?)");
+                                break;
+                            default:
+                                unknown.Add(code);
+                                break;
+                        }
+                    }
+
+                    if (unknown.Count > 0)
+                        return TextCommandResult.Error(
+                            $"Unknown trait code(s): {string.Join(", ", unknown)}. " +
+                            "Run /myracemyrules traits to list every installed trait code; nothing was changed.");
+                    if (ambiguous.Count > 0)
+                        return TextCommandResult.Error(
+                            $"Ambiguous trait code(s) — more than one installed trait matches that spelling, so type the exact casing: {string.Join("; ", ambiguous)}. Nothing was changed.");
+
+                    // Use the canonicalized codes (duplicates after canonicalization collapsed).
+                    codes = resolvedCodes.Distinct(StringComparer.Ordinal).ToList();
+                }
+            }
+
+            bool classesEmptied = false;      // remove/set left a class list [] (= ALL classes)
+            bool classesRestrictedFromAll = false; // add narrowed a previously-unrestricted race
+            int racesChanged = 0;             // add/remove: races whose list actually changed
+            var notRemoved = new HashSet<string>(codes ?? Enumerable.Empty<string>(), StringComparer.Ordinal); // codes never found on any race
+
+            foreach (string raceCode in targets)
+            {
+                if (op == ListOp.Set)
+                {
+                    // Explicit replace: null => restore default; otherwise store the exact list.
+                    SetOverrideList(GetOrCreateOverride(raceCode), field, codes == null ? null : new List<string>(codes));
+                    continue;
+                }
+
+                // Add/Remove compute against the effective list first and only create/write an
+                // override when something actually changes — so a no-op never pins a race to its
+                // current list or leaves an empty override behind.
+                Config.Overrides.TryGetValue(raceCode, out var existing);
+                var list = GetEffectiveList(raceCode, existing ?? new RaceOverrideEntry(), field);
+
+                if (op == ListOp.Add)
+                {
+                    bool wasEmpty = list.Count == 0;
+                    bool changed = false;
+                    foreach (string code in codes!)
+                        if (!list.Contains(code, StringComparer.Ordinal)) { list.Add(code); changed = true; }
+                    if (!changed) continue;
+                    if (field == ListField.Classes && wasEmpty) classesRestrictedFromAll = true;
+                    SetOverrideList(GetOrCreateOverride(raceCode), field, list);
+                    racesChanged++;
+                }
+                else // Remove
+                {
+                    int removed = list.RemoveAll(c =>
+                    {
+                        bool hit = codes!.Contains(c, StringComparer.Ordinal);
+                        if (hit) notRemoved.Remove(c);
+                        return hit;
+                    });
+                    if (removed == 0) continue;
+                    // Store the remainder (even []); for traits [] = no traits, for classes
+                    // [] = ALL classes (PlayerModelLib's meaning).
+                    if (field == ListField.Classes && list.Count == 0) classesEmptied = true;
+                    SetOverrideList(GetOrCreateOverride(raceCode), field, list);
+                    racesChanged++;
+                }
+            }
+
+            // add/remove that changed nothing: don't persist/reapply or claim success.
+            if (op != ListOp.Set && racesChanged == 0)
+            {
+                string noneMsg = op == ListOp.Add
+                    ? $"All listed {fieldName}(s) were already present; nothing changed."
+                    : $"None of the listed {fieldName}(s) were present; nothing changed.";
+                return TextCommandResult.Success(noneMsg);
+            }
+
+            SaveConfig(api);
+            ReapplyOverrides(api);
+
+            string scope = targets.Count == 1 ? $"'{targets[0]}'" : $"{targets.Count} race(s): {string.Join(", ", targets)}";
+            const string tail = "Players see it on reconnect / next world load.";
+
+            string codeList = codes == null ? "" : string.Join(", ", codes);
+            bool classes = field == ListField.Classes;
+            string summary = op switch
+            {
+                ListOp.Set when codes == null         => $"Reset {fieldName}s to the race default on {scope}.",
+                ListOp.Set when codes is { Count: 0 } => classes
+                    ? $"Set {scope} to allow ALL classes (an empty class list is unrestricted)."
+                    : $"Cleared all traits on {scope}.",
+                ListOp.Set                            => $"Set {fieldName}s to [{codeList}] on {scope}.",
+                ListOp.Add                            => $"Added {fieldName}(s) [{codeList}] to {scope}.",
+                ListOp.Remove                         => $"Removed {fieldName}(s) [{codeList}] from {scope}.",
+                _                                     => $"Updated {fieldName}s on {scope}."
+            };
+
+            // Honest notes for the class field's inverted empty-semantics.
+            if (classesEmptied)
+                summary += " One or more races now allow ALL classes (removing the last class leaves an unrestricted list).";
+            if (classesRestrictedFromAll)
+                summary += " Note: one or more of these races previously allowed all classes and are now restricted to the listed class(es).";
+
+            // Remove: name any requested codes that weren't present on any targeted race.
+            if (op == ListOp.Remove && notRemoved.Count > 0)
+                summary += $" Not present on any targeted race (so skipped): {string.Join(", ", notRemoved)}.";
+
+            return TextCommandResult.Success($"{summary} {tail}");
         }
 
         /// <summary>
@@ -1079,7 +1404,8 @@ namespace MyRaceMyRules
                         return;
                     }
 
-                    loadedConfig = new MyRaceMyRulesConfig();
+                    // Fresh install: start at the current schema (no migration needed).
+                    loadedConfig = new MyRaceMyRulesConfig { JsonSchemaVersion = MyRaceMyRulesConfig.CurrentJsonSchemaVersion };
                 }
 
                 Config = loadedConfig;
@@ -1093,11 +1419,64 @@ namespace MyRaceMyRules
                 return;
             }
 
+            bool safeToWrite = MigrateConfig(api, Config);
             SanitizeConfig(api, Config);
 
-            // Write back so first run leaves a well-formed file for the operator to edit.
-            try { api.StoreModConfig(Config, ServerConfigFile); }
-            catch (Exception e) { api.Logger.Error("[myracemyrules] Failed to write server config: {0}", e); }
+            // Write back so first run leaves a well-formed file for the operator to edit —
+            // unless the file is from a newer mod version (don't drop its unknown settings).
+            if (safeToWrite)
+            {
+                try { api.StoreModConfig(Config, ServerConfigFile); }
+                catch (Exception e) { api.Logger.Error("[myracemyrules] Failed to write server config: {0}", e); }
+            }
+        }
+
+        /// <summary>
+        /// Bring an older config file up to the current <see cref="MyRaceMyRulesConfig.CurrentJsonSchemaVersion"/>,
+        /// running ordered steps so a file that skipped releases still converges, then stamps
+        /// the version. Returns false if the file's version is NEWER than this build (written by
+        /// a future mod version) — the caller must then skip the write-back so unknown fields
+        /// aren't dropped. A file already at the current version is a no-op (returns true).
+        ///
+        /// v0 -> v1: normalize empty AllowedVariants/RemoveVariants to null (pre-v1 those empties
+        /// were read as "no change"), matching the standardized rule without changing behavior.
+        /// ExtraTraits and AvailableClasses are left as-is.
+        /// </summary>
+        private static bool MigrateConfig(ICoreAPI api, MyRaceMyRulesConfig config)
+        {
+            if (config.JsonSchemaVersion > MyRaceMyRulesConfig.CurrentJsonSchemaVersion)
+            {
+                api.Logger.Warning(
+                    "[myracemyrules] Config schema v{0} is newer than this mod supports (v{1}); applying it as-is and NOT rewriting the file to avoid dropping newer settings.",
+                    config.JsonSchemaVersion, MyRaceMyRulesConfig.CurrentJsonSchemaVersion);
+                return false;
+            }
+
+            if (config.JsonSchemaVersion == MyRaceMyRulesConfig.CurrentJsonSchemaVersion)
+                return true;
+
+            int from = config.JsonSchemaVersion;
+            int changed = 0;
+
+            if (config.JsonSchemaVersion < 1)
+            {
+                foreach (var ov in config.Overrides.Values)
+                {
+                    if (ov?.SkinnableParts == null) continue;
+                    foreach (var pov in ov.SkinnableParts.Values)
+                    {
+                        if (pov == null) continue;
+                        if (pov.AllowedVariants != null && pov.AllowedVariants.Count == 0) { pov.AllowedVariants = null; changed++; }
+                        if (pov.RemoveVariants != null && pov.RemoveVariants.Count == 0) { pov.RemoveVariants = null; changed++; }
+                    }
+                }
+            }
+
+            config.JsonSchemaVersion = MyRaceMyRulesConfig.CurrentJsonSchemaVersion;
+            api.Logger.Notification(
+                "[myracemyrules] Migrated config schema v{0} -> v{1} ({2} empty variant-filter list(s) normalized to default).",
+                from, MyRaceMyRulesConfig.CurrentJsonSchemaVersion, changed);
+            return true;
         }
 
         private static void SanitizeConfig(ICoreAPI api, MyRaceMyRulesConfig config)
@@ -1296,6 +1675,7 @@ namespace MyRaceMyRules
             try
             {
                 Config = api.LoadModConfig<MyRaceMyRulesConfig>(ServerConfigFile) ?? new MyRaceMyRulesConfig();
+                MigrateConfig(api, Config);
                 api.Logger.Notification("[myracemyrules] Single player: using the local config directly.");
             }
             catch (Exception e)
@@ -1326,6 +1706,7 @@ namespace MyRaceMyRules
             try
             {
                 Config = api.LoadModConfig<MyRaceMyRulesConfig>(cacheFile) ?? new MyRaceMyRulesConfig();
+                MigrateConfig(api, Config);
             }
             catch (Exception e)
             {
@@ -2243,11 +2624,11 @@ namespace MyRaceMyRules
         /// </summary>
         private static string HashConfig(MyRaceMyRulesConfig cfg)
         {
-            string json = JsonConvert.SerializeObject(cfg, Formatting.None);
+            // Hash only the gameplay data (Overrides), not the schema-version envelope: a
+            // version difference must not look like a settings change to the sync/apply logic.
+            string json = JsonConvert.SerializeObject(cfg.Overrides, Formatting.None);
             byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
             return Convert.ToHexString(hash);
         }
-
-        private static string FormatArr(float[]? a) => a == null ? "-" : "[" + string.Join(",", a) + "]";
     }
 }

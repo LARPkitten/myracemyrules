@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 
 namespace MyRaceMyRules
@@ -11,6 +10,20 @@ namespace MyRaceMyRules
     /// </summary>
     public class MyRaceMyRulesConfig
     {
+        /// <summary>
+        /// Schema version of THIS config FILE (not the mod version). Lets the mod auto-migrate
+        /// older files to the current layout on load. The field defaults to 0, so a pre-versioning
+        /// file (which has no such key) deserializes as 0 and is treated as the oldest — exactly
+        /// what we want. A freshly created config is stamped to the current version instead.
+        ///
+        /// Bump <see cref="CurrentJsonSchemaVersion"/> ONLY when the on-disk shape or the
+        /// meaning of a stored value changes, and add a matching ordered step in the migrator.
+        /// </summary>
+        public int JsonSchemaVersion = 0;
+
+        /// <summary>The schema version this build of the mod reads/writes.</summary>
+        public const int CurrentJsonSchemaVersion = 1;
+
         /// <summary>
         /// Per-race overrides, keyed by fully-qualified model code "domain:modelcode"
         /// (e.g. "racialequality:ork"). The default race uses the plain key "seraph".

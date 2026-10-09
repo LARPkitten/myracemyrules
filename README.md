@@ -83,6 +83,12 @@ Orks who can be tiny or towering with all haircolors allowed, no dwarves, and a 
   them. Both need the `controlserver` privilege.
 - **Include a setting to change it, leave it null to keep the race mod's value.** There's no
   separate on/off switch — presence is the switch.
+- **For lists:** `null` = keep the race's default. A list of codes = exactly those. An empty
+  list `[]` means *no traits* for `ExtraTraits`, but *all classes* for `AvailableClasses` (an
+  empty class list is how the game says "unrestricted"). In commands: `default` resets to the
+  race's own; for traits `none` empties the list; for classes `all` allows every class.
+- **Old config files update themselves.** The file has a version number; the mod upgrades older
+  files on load. Nothing for you to do.
 
 ### Putting options back
 
@@ -188,10 +194,14 @@ when they connect — you don't need to tell them anything.
 | `/myracemyrules <racecode> description <text>` | `controlserver` | Sets the race's character-creation description (use `default` to restore the race mod's description) |
 | `/myracemyrules <racecode> eyeheight <baseValue>` | `controlserver` | Sets the base eye height |
 | `/myracemyrules <racecode> collision <width> <height>` | `controlserver` | Sets the base collision box |
-| `/myracemyrules <racecode> sizerange <min> <max>` | `controlserver` | Sets the character size range; the minimum cannot be below `0.2` |
-| `/myracemyrules <racecode> enableall <part>` | `controlserver` | Restores all default variants for one appearance section |
-| `/myracemyrules all sizerange <min> <max>` | `controlserver` | Sets the size range for every detected race |
-| `/myracemyrules all enableall <part>` | `controlserver` | Restores all default variants for one section on every detected race |
+| `/myracemyrules <racecode>\|all sizerange <min> <max>` | `controlserver` | Sets the character size range; the minimum cannot be below `0.2`. `all` applies to every detected race |
+| `/myracemyrules <racecode>\|all enableall <part>` | `controlserver` | Restores all default variants for one appearance section. `all` applies to every detected race |
+| `/myracemyrules <racecode>\|all add trait <code...>` | `controlserver` | Adds one or more traits (keeps the ones the race already grants); unknown codes are rejected. `all` applies to every detected race |
+| `/myracemyrules <racecode>\|all remove trait <code...>` | `controlserver` | Removes one or more traits, including traits the race mod itself grants. `all` applies to every detected race |
+| `/myracemyrules <racecode>\|all set trait <code...\|none\|default>` | `controlserver` | Replaces the race's trait list: codes = that set, `none` = no traits, `default` = restore the race's own. `all` applies to every detected race |
+| `/myracemyrules <racecode>\|all add class <code...>` | `controlserver` | Adds one or more classes the race may pick (if the race allowed all classes, this restricts it to the listed ones) |
+| `/myracemyrules <racecode>\|all remove class <code...>` | `controlserver` | Removes one or more classes; removing the last one leaves the race unrestricted (all classes) |
+| `/myracemyrules <racecode>\|all set class <code...\|all\|default>` | `controlserver` | Replaces the race's class list: codes = that set, `all` = every class, `default` = restore the race's own |
 | `/myracemyrules traits` | `controlserver` | Writes every installed trait (code, name, description, and stat changes) to `Logs/myracemyrules-traits.txt` |
 
 The `/mrmr` command is an alias for `/myracemyrules`, so all of the same forms are available
