@@ -198,10 +198,10 @@ when they connect — you don't need to tell them anything.
 | `/myracemyrules <racecode>\|all enableall <part>` | `controlserver` | Restores all default variants for one appearance section. `all` applies to every detected race |
 | `/myracemyrules <racecode>\|all add trait <code...>` | `controlserver` | Adds one or more traits (keeps the ones the race already grants); unknown codes are rejected. `all` applies to every detected race |
 | `/myracemyrules <racecode>\|all remove trait <code...>` | `controlserver` | Removes one or more traits, including traits the race mod itself grants. `all` applies to every detected race |
-| `/myracemyrules <racecode>\|all set trait <code...\|none\|default>` | `controlserver` | Replaces the race's trait list: codes = that set, `none` = no traits, `default` = restore the race's own. `all` applies to every detected race |
+| `/myracemyrules <racecode>\|all set traits <code...\|none\|default>` | `controlserver` | Replaces the race's trait list: codes = that set, `none` = no traits, `default` = restore the race's own. `all` applies to every detected race |
 | `/myracemyrules <racecode>\|all add class <code...>` | `controlserver` | Adds one or more classes the race may pick (if the race allowed all classes, this restricts it to the listed ones) |
 | `/myracemyrules <racecode>\|all remove class <code...>` | `controlserver` | Removes one or more classes; removing the last one leaves the race unrestricted (all classes) |
-| `/myracemyrules <racecode>\|all set class <code...\|all\|default>` | `controlserver` | Replaces the race's class list: codes = that set, `all` = every class, `default` = restore the race's own |
+| `/myracemyrules <racecode>\|all set classes <code...\|all\|default>` | `controlserver` | Replaces the race's class list: codes = that set, `all` = every class, `default` = restore the race's own |
 | `/myracemyrules traits` | `controlserver` | Writes every installed trait (code, name, description, and stat changes) to `Logs/myracemyrules-traits.txt` |
 
 The `/mrmr` command is an alias for `/myracemyrules`, so all of the same forms are available

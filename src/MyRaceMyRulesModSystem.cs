@@ -327,11 +327,20 @@ namespace MyRaceMyRules
                 string.Equals(action, "add", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(action, "remove", StringComparison.OrdinalIgnoreCase))
             {
-                // Grammar: <race|all> set|add|remove <trait|class> <code...|none|default>.
+                // Set uses plural field names; add/remove retain the singular form.
                 // The field word sits in value1; the codes (or a keyword) follow in value2.
                 string fieldWord = GetArg(args, 2) ?? "";
-                if (!TryParseListField(fieldWord, out ListField field))
-                    return TextCommandResult.Error($"Usage: /myracemyrules <mod:race|all> {action} <trait|class> <code> [code ...]");
+                bool isSet = string.Equals(action, "set", StringComparison.OrdinalIgnoreCase);
+                bool validField = TryParseListField(fieldWord, out ListField field) &&
+                    (!isSet || string.Equals(
+                        fieldWord,
+                        field == ListField.Traits ? "traits" : "classes",
+                        StringComparison.OrdinalIgnoreCase));
+                if (!validField)
+                {
+                    string usageFields = isSet ? "<traits|classes>" : "<trait|class>";
+                    return TextCommandResult.Error($"Usage: /myracemyrules <mod:race|all> {action} {usageFields} <code> [code ...]");
+                }
 
                 var tokens = (GetArg(args, 3) ?? "")
                     .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
@@ -358,16 +367,16 @@ namespace MyRaceMyRules
                         if (hasDefault) return EditListField(api, first, field, ListOp.Set, codes: null);
                         if (hasNone) return EditListField(api, first, field, ListOp.Set, codes: new List<string>());
                         if (tokens.Count == 0)
-                            return TextCommandResult.Error("Usage: /myracemyrules <mod:race|all> set trait <code> [code ...]  (use 'none' for no traits, 'default' to restore the race's own).");
+                            return TextCommandResult.Error("Usage: /myracemyrules <mod:race|all> set traits <code> [code ...]  (use 'none' for no traits, 'default' to restore the race's own).");
                     }
                     else // Classes: [] means ALL classes; there is no "no classes" state.
                     {
                         if (hasNone)
-                            return TextCommandResult.Error("Classes can't be emptied: in PlayerModelLib an empty class list means ALL classes. Use 'set class all' for that, 'default' to restore the race's own, or list class codes.");
+                            return TextCommandResult.Error("Classes can't be emptied: in PlayerModelLib an empty class list means ALL classes. Use 'set classes all' for that, 'default' to restore the race's own, or list class codes.");
                         if (hasDefault) return EditListField(api, first, field, ListOp.Set, codes: null);
                         if (hasAll) return EditListField(api, first, field, ListOp.Set, codes: new List<string>());
                         if (tokens.Count == 0)
-                            return TextCommandResult.Error("Usage: /myracemyrules <mod:race|all> set class <code> [code ...]  (use 'all' for every class, 'default' to restore the race's own).");
+                            return TextCommandResult.Error("Usage: /myracemyrules <mod:race|all> set classes <code> [code ...]  (use 'all' for every class, 'default' to restore the race's own).");
                     }
 
                     var setCodes = tokens.Distinct(StringComparer.Ordinal).ToList();
@@ -906,7 +915,8 @@ namespace MyRaceMyRules
             sb.AppendLine("  /myracemyrules mod:race enableall part");
             sb.AppendLine("  /myracemyrules all sizerange min max");
             sb.AppendLine("  /myracemyrules all enableall part");
-            sb.AppendLine("  /myracemyrules <mod:race|all> set <trait|class> <code...|none|all|default>");
+            sb.AppendLine("  /myracemyrules <mod:race|all> set traits <code...|none|default>");
+            sb.AppendLine("  /myracemyrules <mod:race|all> set classes <code...|all|default>");
             sb.AppendLine("  /myracemyrules <mod:race|all> add <trait|class> <code> [code ...]");
             sb.AppendLine("  /myracemyrules <mod:race|all> remove <trait|class> <code> [code ...]");
             sb.AppendLine("  /myracemyrules traits");
@@ -919,7 +929,7 @@ namespace MyRaceMyRules
             sb.AppendLine("  - 'name' and 'description' work for seraph too (they come from the game's language file)");
             sb.AppendLine("  - 'eyeheight' and 'collision' also scale by the race's SizeRange to produce a min/max range");
             sb.AppendLine("  - 'traits' writes every installed trait (code, name, description, attribute changes) to a file in the game's Logs folder");
-            sb.AppendLine("  - set/add/remove edit a race's trait or class list; 'set' replaces it, 'add'/'remove' adjust it. 'default' restores the race's own. For traits 'none' = no traits; for classes 'all' = every class (an empty class list is unrestricted). 'add'/'set' reject trait codes that aren't installed (run 'traits' to list codes)");
+            sb.AppendLine("  - 'set traits' replaces a race's trait list; 'add trait'/'remove trait' adjust it. 'set classes' replaces the class list; 'add class'/'remove class' adjust it. 'default' restores the race's own. For traits 'none' = no traits; for classes 'all' = every class (an empty class list is unrestricted). 'add'/'set' reject trait codes that aren't installed (run 'traits' to list codes)");
             return sb.ToString();
         }  
 
@@ -1241,7 +1251,7 @@ namespace MyRaceMyRules
             ReapplyOverrides(api);
 
             string scope = targets.Count == 1 ? $"'{targets[0]}'" : $"{targets.Count} race(s): {string.Join(", ", targets)}";
-            const string tail = "Players see it on reconnect / next world load.";
+            const string tail = "This change will take effect on reconnect / next world load.";
 
             string codeList = codes == null ? "" : string.Join(", ", codes);
             bool classes = field == ListField.Classes;
